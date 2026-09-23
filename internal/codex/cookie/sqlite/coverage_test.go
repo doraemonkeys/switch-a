@@ -133,15 +133,15 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 		{HandleDigest: digest, JarID: record.JarID, ClientScope: owner, CreatedAt: now, LastAccessAt: now.Add(-time.Second), IdleExpiresAt: now.Add(time.Hour), AbsoluteExpiresAt: now.Add(time.Hour)},
 	}
 	for _, invalid := range invalidRecords {
-		if err := repository.CreateBinding(ctx, invalid, policy); err == nil {
-			t.Fatalf("CreateBinding accepted invalid record: %#v", invalid)
+		if _, err := repository.CreateJar(ctx, invalid, testAuthority(t, "invalid"), nil, policy); err == nil {
+			t.Fatalf("CreateJar accepted invalid record: %#v", invalid)
 		}
 	}
-	if err := repository.CreateBinding(missingContext, record, policy); err == nil {
-		t.Fatal("CreateBinding accepted nil context")
+	if _, err := repository.CreateJar(missingContext, record, testAuthority(t, "invalid"), nil, policy); err == nil {
+		t.Fatal("CreateJar accepted nil context")
 	}
-	if err := repository.CreateBinding(ctx, record, badPolicy); err == nil {
-		t.Fatal("CreateBinding accepted invalid policy")
+	if _, err := repository.CreateJar(ctx, record, testAuthority(t, "invalid"), nil, badPolicy); err == nil {
+		t.Fatal("CreateJar accepted invalid policy")
 	}
 	if _, err := repository.Load(missingContext, providercookie.CookieScope{}, now); err == nil {
 		t.Fatal("Load accepted nil context")
@@ -204,7 +204,7 @@ func TestValidationBoundariesAndClosedStorageErrors(t *testing.T) {
 	closedScope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "closed"))
 	for name, operation := range map[string]func() error{
 		"use":      func() error { _, err := closedRepository.UseBinding(ctx, lookup); return err },
-		"create":   func() error { return closedRepository.CreateBinding(ctx, record, policy) },
+		"create":   func() error { return closedRepository.seedBinding(ctx, record, policy) },
 		"load":     func() error { _, err := closedRepository.Load(ctx, closedScope, now); return err },
 		"versions": func() error { _, err := closedRepository.RequiredAEADVersions(ctx); return err },
 	} {
@@ -222,7 +222,7 @@ func TestCorruptRowsAndInvalidCipherMetadataFailClosed(t *testing.T) {
 	now := time.Date(2026, 8, 27, 11, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "corrupt", testOwner(t, keyring, "owner"), now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(ctx, record, policy); err != nil {
+	if err := repository.seedBinding(ctx, record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "corrupt"))
@@ -255,7 +255,7 @@ func TestCorruptRowsAndInvalidCipherMetadataFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	record = testBinding(t, keyring, "invalid-cipher", testOwner(t, keyring, "owner"), now)
-	if err := invalidRepository.CreateBinding(ctx, record, policy); err != nil {
+	if err := invalidRepository.seedBinding(ctx, record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ = providercookie.NewCookieScope(record.JarID, testAuthority(t, "invalid-cipher"))
@@ -325,10 +325,10 @@ func TestMissingJarAmbiguousHandleAndVersionCorruptionFailClosed(t *testing.T) {
 	first := testBinding(t, keyring, "first", owner, now)
 	otherOwner := testOwner(t, keyring, "other-owner")
 	second := testBinding(t, keyring, "second", otherOwner, now)
-	if err := repository.CreateBinding(ctx, first, policy); err != nil {
+	if err := repository.seedBinding(ctx, first, policy); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.CreateBinding(ctx, second, policy); err != nil {
+	if err := repository.seedBinding(ctx, second, policy); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.UseBinding(ctx, providercookie.BindingLookup{
@@ -442,7 +442,7 @@ func TestTransactionCommitFailureAndHelperStorageErrors(t *testing.T) {
 	if _, err := connection.ExecContext(ctx, "DROP TABLE "+entriesTable); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cleanupStale(ctx, connection, time.Now(), time.Hour); !errors.Is(err, providercookie.ErrStorage) {
+	if _, err := (&Repository{activity: &jarActivity{}}).cleanupStale(ctx, connection, time.Now(), time.Hour); !errors.Is(err, providercookie.ErrStorage) {
 		t.Fatalf("cleanup missing entries = %v", err)
 	}
 	if _, err := deleteEmptyAuthorities(ctx, connection, nil); !errors.Is(err, providercookie.ErrStorage) {
@@ -478,7 +478,7 @@ func TestSQLHelperFailuresRemainTypedAndRollback(t *testing.T) {
 		db := openTestDatabase(t, filepath.Join(t.TempDir(), "helper.db"))
 		repository := migrateAndOpen(t, db, keyring, 0)
 		record := testBinding(t, keyring, t.Name(), testOwner(t, keyring, t.Name()), now)
-		if err := repository.CreateBinding(ctx, record, policy); err != nil {
+		if err := repository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "helper"))
@@ -536,8 +536,8 @@ func TestSQLHelperFailuresRemainTypedAndRollback(t *testing.T) {
 		if _, err := item.repository.Cleanup(ctx, providercookie.CleanupRequest{At: now, Policy: policy}); !errors.Is(err, providercookie.ErrStorage) {
 			t.Fatalf("Cleanup = %v", err)
 		}
-		if err := item.repository.CreateBinding(ctx, testBinding(t, keyring, "second", testOwner(t, keyring, "second"), now), policy); !errors.Is(err, providercookie.ErrStorage) {
-			t.Fatalf("CreateBinding = %v", err)
+		if err := item.repository.seedBinding(ctx, testBinding(t, keyring, "second", testOwner(t, keyring, "second"), now), policy); !errors.Is(err, providercookie.ErrStorage) {
+			t.Fatalf("CreateJar = %v", err)
 		}
 	})
 
@@ -601,7 +601,7 @@ func TestSQLHelperFailuresRemainTypedAndRollback(t *testing.T) {
 		if err := item.db.Exec("DROP TABLE " + handlesTable).Error; err != nil {
 			t.Fatal(err)
 		}
-		if _, err := cleanupStale(ctx, item.connection, now, time.Hour); !errors.Is(err, providercookie.ErrStorage) {
+		if _, err := item.repository.cleanupStale(ctx, item.connection, now, time.Hour); !errors.Is(err, providercookie.ErrStorage) {
 			t.Fatalf("cleanup missing handles = %v", err)
 		}
 	})
@@ -703,7 +703,7 @@ func TestAdditionalSchemaVersionAndCodecFailureSurfaces(t *testing.T) {
 	repository := migrateAndOpen(t, db, keyring, 0)
 	now := time.Date(2026, 8, 27, 15, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "codec", testOwner(t, keyring, "codec"), now)
-	if err := repository.CreateBinding(ctx, record, providercookie.DefaultPolicy()); err != nil {
+	if err := repository.seedBinding(ctx, record, providercookie.DefaultPolicy()); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "codec"))
@@ -744,7 +744,7 @@ func TestMergeSQLMutationFailuresRollbackAtomically(t *testing.T) {
 		db := openTestDatabase(t, filepath.Join(t.TempDir(), "merge-trigger.db"))
 		repository := migrateAndOpen(t, db, keyring, 0)
 		record := testBinding(t, keyring, t.Name(), testOwner(t, keyring, t.Name()), now)
-		if err := repository.CreateBinding(ctx, record, policy); err != nil {
+		if err := repository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "merge-trigger"))
@@ -822,7 +822,7 @@ func TestLegacyReencryptionFailuresRollbackAndPreserveCiphertext(t *testing.T) {
 		legacyKeys := testKeyring(t, "a1")
 		legacyRepository := migrateAndOpen(t, db, legacyKeys, 0)
 		record := testBinding(t, legacyKeys, t.Name(), testOwner(t, legacyKeys, t.Name()), now)
-		if err := legacyRepository.CreateBinding(ctx, record, policy); err != nil {
+		if err := legacyRepository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "legacy-failure"))
@@ -889,7 +889,7 @@ func TestCorruptExpiredBindingAndAbsoluteRefreshBoundaryFailClosed(t *testing.T)
 		db := openTestDatabase(t, filepath.Join(t.TempDir(), "corrupt-expired.db"))
 		repository := migrateAndOpen(t, db, keyring, 0)
 		record := testBinding(t, keyring, "corrupt-expired", testOwner(t, keyring, "corrupt-expired"), now)
-		if err := repository.CreateBinding(ctx, record, policy); err != nil {
+		if err := repository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.Exec("PRAGMA ignore_check_constraints = ON").Error; err != nil {
@@ -909,7 +909,7 @@ func TestCorruptExpiredBindingAndAbsoluteRefreshBoundaryFailClosed(t *testing.T)
 		record := testBinding(t, keyring, "absolute-refresh", testOwner(t, keyring, "absolute-refresh"), now)
 		record.AbsoluteExpiresAt = now.Add(time.Hour)
 		record.IdleExpiresAt = record.AbsoluteExpiresAt
-		if err := repository.CreateBinding(ctx, record, policy); err != nil {
+		if err := repository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		use, err := repository.UseBinding(ctx, providercookie.BindingLookup{
@@ -942,7 +942,7 @@ func TestBindingRowCorruptionVariantsFailClosed(t *testing.T) {
 			db := openTestDatabase(t, filepath.Join(t.TempDir(), "corrupt-binding.db"))
 			repository := migrateAndOpen(t, db, keyring, 0)
 			record := testBinding(t, keyring, "corrupt-binding", testOwner(t, keyring, "corrupt-binding"), now)
-			if err := repository.CreateBinding(ctx, record, policy); err != nil {
+			if err := repository.seedBinding(ctx, record, policy); err != nil {
 				t.Fatal(err)
 			}
 			if err := db.Exec("PRAGMA ignore_check_constraints = ON").Error; err != nil {
@@ -972,7 +972,7 @@ func TestCleanupDeleteFailuresRollbackWholeSweep(t *testing.T) {
 		db := openTestDatabase(t, filepath.Join(t.TempDir(), "cleanup-delete.db"))
 		repository := migrateAndOpen(t, db, keyring, 0)
 		record := testBinding(t, keyring, t.Name(), testOwner(t, keyring, t.Name()), now)
-		if err := repository.CreateBinding(ctx, record, policy); err != nil {
+		if err := repository.seedBinding(ctx, record, policy); err != nil {
 			t.Fatal(err)
 		}
 		scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "cleanup-delete"))

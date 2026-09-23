@@ -3,6 +3,7 @@ package codexws
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"net/http"
@@ -373,6 +374,9 @@ func TestCookieOverlayIsSelectedOnRedialAndCommittedAtVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cookieRepository.binding.JarID != (providercookie.JarID{}) {
+		t.Fatal("upgrade reservation persisted an empty binding")
+	}
 	if !strings.Contains(op.GatewaySetCookie(), providercookie.GatewayHandleName+"=") || !strings.Contains(op.GatewaySetCookie(), "Secure") {
 		t.Fatalf("gateway Set-Cookie = %q", op.GatewaySetCookie())
 	}
@@ -560,13 +564,30 @@ func TestCookieFailureAndDiscardPaths(t *testing.T) {
 		t.Fatal("closed cookie commit should be idempotent:", err)
 	}
 
-	failingRepository := &testCookieRepository{loadErr: errors.New("load failed")}
+	failingRepository := &testCookieRepository{}
 	base.ProviderCookies = newTestCookieService(t, failingRepository)
 	op, err = newTestRuntime(t, base).Begin(context.Background(), testRequest("client-a"), codexAPIType, "cookie-load", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate, applied := testCandidate(t, "route-a", "http://api.example.test/v1")
+	if _, err := op.PrepareDial(context.Background(), make(http.Header), candidate, applied, mustURL(t, "ws://api.example.test/v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyHandshake(mustURL(t, "ws://api.example.test/v1"), http.Header{"Set-Cookie": {"sid=value; Path=/"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.CommitCookies(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handleRequest := testRequest("client-a")
+	handleRequest.Header.Set("Cookie", strings.Split(op.GatewaySetCookie(), ";")[0])
+	op.DiscardCookies()
+	failingRepository.loadErr = errors.New("load failed")
+	op, err = newTestRuntime(t, base).Begin(context.Background(), handleRequest, codexAPIType, "cookie-load-reuse", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := op.PrepareDial(context.Background(), make(http.Header), candidate, applied, mustURL(t, "ws://api.example.test/v1")); Classify(err) != FailureStorage {
 		t.Fatalf("cookie select class=%q err=%v", Classify(err), err)
 	}
@@ -578,6 +599,9 @@ func TestCookieFailureAndDiscardPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := op.PrepareDial(context.Background(), make(http.Header), candidate, applied, mustURL(t, "ws://api.example.test/v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := op.ApplyHandshake(mustURL(t, "ws://api.example.test/v1"), http.Header{"Set-Cookie": {"sid=value; Path=/"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := op.CommitCookies(context.Background()); Classify(err) != FailureStorage {
@@ -988,15 +1012,30 @@ type testCookieRepository struct {
 	mergeErr error
 }
 
-func (*testCookieRepository) UseBinding(context.Context, providercookie.BindingLookup) (providercookie.BindingUse, error) {
+func (r *testCookieRepository) UseBinding(_ context.Context, lookup providercookie.BindingLookup) (providercookie.BindingUse, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, digest := range lookup.HandleDigests {
+		if digest == r.binding.HandleDigest {
+			return providercookie.BindingUse{Disposition: providercookie.BindingValid, Record: r.binding}, nil
+		}
+	}
 	return providercookie.BindingUse{Disposition: providercookie.BindingUnknown}, nil
 }
 
-func (r *testCookieRepository) CreateBinding(_ context.Context, binding providercookie.BindingRecord, _ providercookie.Policy) error {
+func (r *testCookieRepository) CreateJar(ctx context.Context, binding providercookie.BindingRecord, authority codexidentity.CookieAuthority, changes []providercookie.Mutation, policy providercookie.Policy) (providercookie.CreatedJar, error) {
+	scope, err := providercookie.NewCookieScope(binding.JarID, authority)
+	if err != nil {
+		return providercookie.CreatedJar{}, err
+	}
+	merged, err := r.Merge(ctx, scope, changes, binding.CreatedAt, policy)
+	if err != nil {
+		return providercookie.CreatedJar{}, err
+	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.binding = binding
-	return nil
+	r.mu.Unlock()
+	return providercookie.CreatedJar{Merge: merged}, nil
 }
 
 func (r *testCookieRepository) Load(_ context.Context, scope providercookie.CookieScope, _ time.Time) (providercookie.Snapshot, error) {
@@ -1028,7 +1067,7 @@ func newTestCookieService(t *testing.T, repository providercookie.Repository) *p
 	t.Helper()
 	service, err := providercookie.NewService(providercookie.ServiceConfig{
 		Repository: repository, HandleDigester: testHandleDigester{},
-		Random: bytes.NewReader(bytes.Repeat([]byte{9}, 256)),
+		Random: rand.Reader,
 		HostCanonicalizer: providercookie.HostCanonicalizerFunc(func(host string) (string, error) {
 			return strings.ToLower(host), nil
 		}),

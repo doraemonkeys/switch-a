@@ -32,6 +32,7 @@ type Repository struct {
 	cipher      ValueCipher
 	busyTimeout time.Duration
 	currentAEAD string
+	activity    *jarActivity
 }
 
 func Open(ctx context.Context, config Config) (*Repository, error) {
@@ -62,11 +63,16 @@ func Open(ctx context.Context, config Config) (*Repository, error) {
 	if err != nil {
 		return nil, classifyDatabaseError("open_repository", err)
 	}
+	activity, err := activityFor(ctx, database)
+	if err != nil {
+		return nil, err
+	}
 	return &Repository{
 		database:    database,
 		cipher:      config.Cipher,
 		busyTimeout: config.BusyTimeout,
 		currentAEAD: capabilities.AEADCurrent,
+		activity:    activity,
 	}, nil
 }
 
@@ -116,22 +122,29 @@ func (r *Repository) UseBinding(ctx context.Context, lookup providercookie.Bindi
 		var effectiveAccessMS, effectiveIdleMS int64
 		if err := connection.QueryRowContext(ctx,
 			"UPDATE "+handlesTable+` SET
+				last_returned_at_ms = MAX(last_access_at_ms, ?),
 				last_access_at_ms = MAX(last_access_at_ms, ?),
 				idle_expires_at_ms = MIN(absolute_expires_at_ms,
 					MAX(idle_expires_at_ms, MAX(last_access_at_ms, ?) + ?))
 			WHERE handle_key_version = ? AND handle_digest = ?
 			RETURNING last_access_at_ms, idle_expires_at_ms`,
-			toMillis(at), toMillis(at), lookup.Policy.HandleIdleTTL.Milliseconds(),
+			toMillis(at), toMillis(at), toMillis(at), lookup.Policy.HandleIdleTTL.Milliseconds(),
 			record.HandleDigest.Version, record.HandleDigest.Sum[:],
 		).Scan(&effectiveAccessMS, &effectiveIdleMS); err != nil {
 			return classifyDatabaseError("touch_binding", err)
 		}
 		record.LastAccessAt = fromMillis(effectiveAccessMS)
+		record.LastReturnedAt = record.LastAccessAt
 		record.IdleExpiresAt = fromMillis(effectiveIdleMS)
 		result.Record = record
 		result.Disposition = providercookie.BindingValid
+		result.Release = r.activity.acquire(record.JarID)
 		return nil
 	})
+	if err != nil && result.Release != nil {
+		result.Release()
+		result = providercookie.BindingUse{}
+	}
 	return result, err
 }
 
@@ -311,7 +324,7 @@ func validateBinding(record providercookie.BindingRecord) error {
 }
 
 const bindingColumns = `handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest,
-	created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms`
+	created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms, last_returned_at_ms`
 
 func findBindings(ctx context.Context, connection *sql.Conn, digests []codexkeyring.Digest) ([]providercookie.BindingRecord, error) {
 	predicates := make([]string, 0, len(digests))
@@ -339,7 +352,8 @@ func queryBindings(
 		var version, clientVersion string
 		var digestBytes, jarBytes, clientDigest []byte
 		var created, accessed, idle, absolute int64
-		if err := rows.Scan(&version, &digestBytes, &jarBytes, &clientVersion, &clientDigest, &created, &accessed, &idle, &absolute); err != nil {
+		var returned sql.NullInt64
+		if err := rows.Scan(&version, &digestBytes, &jarBytes, &clientVersion, &clientDigest, &created, &accessed, &idle, &absolute, &returned); err != nil {
 			return nil, classifyDatabaseError("scan_binding", err)
 		}
 		if len(digestBytes) != codexidentity.DigestSize || len(clientDigest) != codexidentity.DigestSize {
@@ -364,6 +378,9 @@ func queryBindings(
 			LastAccessAt:      fromMillis(accessed),
 			IdleExpiresAt:     fromMillis(idle),
 			AbsoluteExpiresAt: fromMillis(absolute),
+		}
+		if returned.Valid {
+			record.LastReturnedAt = fromMillis(returned.Int64)
 		}
 		if err := validateBinding(record); err != nil {
 			return nil, corruptError("scan_binding", err)

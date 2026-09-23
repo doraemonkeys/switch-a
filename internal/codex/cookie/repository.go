@@ -23,6 +23,7 @@ type BindingRecord struct {
 	ClientScope       codexidentity.ClientScope
 	CreatedAt         time.Time
 	LastAccessAt      time.Time
+	LastReturnedAt    time.Time
 	IdleExpiresAt     time.Time
 	AbsoluteExpiresAt time.Time
 }
@@ -31,6 +32,7 @@ type BindingUse struct {
 	Disposition BindingDisposition
 	Record      BindingRecord
 	Refresh     bool
+	Release     func()
 }
 
 type BindingLookup struct {
@@ -41,10 +43,16 @@ type BindingLookup struct {
 }
 
 type MergeResult struct {
-	Upserted    int
-	Deleted     int
-	Reencrypted int
-	Evicted     int
+	Upserted          int
+	Deleted           int
+	Reencrypted       int
+	Evicted           int
+	ReclaimedBindings int
+}
+
+type CreatedJar struct {
+	Merge   MergeResult
+	Release func()
 }
 
 type CleanupRequest struct {
@@ -55,17 +63,19 @@ type CleanupRequest struct {
 
 type CleanupResult struct {
 	ExpiredBindings   int
+	EmptyBindings     int
 	ExpiredCookies    int
 	OrphanAuthorities int
 	EmptyAuthorities  int
 }
 
-// Repository is defined at the consuming service boundary. Implementations
-// must serialize each merge in one durable transaction; process-local locking
-// may reduce contention but is not the correctness mechanism.
+// Repository is defined at the consuming service boundary. Create and merge
+// must be atomic transactions. UseBinding and CreateJar acquire live leases
+// before releasing the writer lock: atomic writes alone cannot protect a jar
+// from reclamation between lookup and request completion. Release is idempotent.
 type Repository interface {
 	UseBinding(context.Context, BindingLookup) (BindingUse, error)
-	CreateBinding(context.Context, BindingRecord, Policy) error
+	CreateJar(context.Context, BindingRecord, codexidentity.CookieAuthority, []Mutation, Policy) (CreatedJar, error)
 	Load(context.Context, CookieScope, time.Time) (Snapshot, error)
 	Touch(context.Context, CookieScope, []CookieKey, time.Time) error
 	Merge(context.Context, CookieScope, []Mutation, time.Time, Policy) (MergeResult, error)

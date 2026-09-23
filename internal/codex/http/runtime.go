@@ -42,8 +42,7 @@ type Continuity interface {
 }
 
 type ProviderCookies interface {
-	ResolveJar(context.Context, providercookie.OperationID, string, []codexidentity.ClientScope) (providercookie.JarAccess, error)
-	BeginRequest(providercookie.OperationID, providercookie.JarAccess) (*providercookie.Request, error)
+	BeginRequest(context.Context, providercookie.OperationID, string, []codexidentity.ClientScope) (*providercookie.Request, error)
 }
 
 type ExternalSchemeResolver interface {
@@ -106,9 +105,9 @@ type Operation struct {
 	requestClaimsCommitted bool
 
 	cookieRequest       *providercookie.Request
+	cookieScheme        providercookie.ResolvedExternalScheme
 	lastCookieAuthority *codexidentity.CookieAuthority
 	gatewaySetCookie    string
-	cookieClosed        bool
 }
 
 // RequiresClientEvidence expresses the continuity consumer's admission dependency.
@@ -256,22 +255,8 @@ func (o *Operation) beginProviderCookies(ctx context.Context, request *http.Requ
 	if err != nil {
 		return dependencyError("provider_cookie", err)
 	}
-	access, err := o.runtime.providerCookies.ResolveJar(ctx, cookieOperationID, gatewayHandle(request), o.clientScopes)
-	if err != nil {
-		return dependencyError("provider_cookie", err)
-	}
-	o.cookieRequest, err = o.runtime.providerCookies.BeginRequest(cookieOperationID, access)
-	if err != nil {
-		return dependencyError("provider_cookie", err)
-	}
-	if !access.Issued() && !access.Refresh() {
-		return nil
-	}
-	handle, err := providercookie.NewGatewayHandleCookie(access.HandleValue(), scheme)
-	if err != nil {
-		return dependencyError("provider_cookie", err)
-	}
-	o.gatewaySetCookie, err = handle.HeaderValue()
+	o.cookieScheme = scheme
+	o.cookieRequest, err = o.runtime.providerCookies.BeginRequest(ctx, cookieOperationID, gatewayHandle(request), o.clientScopes)
 	if err != nil {
 		return dependencyError("provider_cookie", err)
 	}

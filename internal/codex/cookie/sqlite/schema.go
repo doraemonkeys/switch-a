@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 3
+	CurrentSchemaVersion = 4
 	schemaRowID          = 1
 
 	schemaTable      = "codex_provider_cookie_schema_meta"
@@ -37,6 +37,7 @@ const handlesDefinition = `CREATE TABLE codex_provider_cookie_handles (
 		last_access_at_ms INTEGER NOT NULL CHECK (last_access_at_ms >= created_at_ms),
 		idle_expires_at_ms INTEGER NOT NULL CHECK (idle_expires_at_ms > last_access_at_ms),
 		absolute_expires_at_ms INTEGER NOT NULL CHECK (absolute_expires_at_ms > created_at_ms),
+		last_returned_at_ms INTEGER NULL CHECK (last_returned_at_ms IS NULL OR (last_returned_at_ms >= created_at_ms AND last_returned_at_ms <= last_access_at_ms)),
 		PRIMARY KEY (handle_key_version, handle_digest),
 		CHECK (idle_expires_at_ms <= absolute_expires_at_ms)
 ) WITHOUT ROWID`
@@ -118,6 +119,7 @@ var schemaManifest = []sqliteschema.Table{
 			{Name: "last_access_at_ms", Type: "INTEGER", NotNull: true},
 			{Name: "idle_expires_at_ms", Type: "INTEGER", NotNull: true},
 			{Name: "absolute_expires_at_ms", Type: "INTEGER", NotNull: true},
+			{Name: "last_returned_at_ms", Type: "INTEGER"},
 		},
 		Indexes: []sqliteschema.Index{{
 			Name: "idx_codex_provider_cookie_handles_expiry", Columns: []string{"idle_expires_at_ms", "absolute_expires_at_ms"}, SQL: handlesExpiryIndex,
@@ -311,7 +313,7 @@ func readSchemaVersion(ctx context.Context, db *gorm.DB) (int, bool, error) {
 
 func migrateSchema(tx *gorm.DB, version int) error {
 	switch version {
-	case 1, 2:
+	case 1, 2, 3:
 		if err := rebuildHandlesTable(tx); err != nil {
 			return err
 		}
@@ -339,7 +341,7 @@ func rebuildHandlesTable(tx *gorm.DB) error {
 		return storageError("create_handles_upgrade_table", err)
 	}
 	columns := "handle_key_version, handle_digest, jar_id, client_scope_key_version, client_scope_digest, created_at_ms, last_access_at_ms, idle_expires_at_ms, absolute_expires_at_ms"
-	copyStatement := fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s", handlesUpgradeTable, columns, columns, handlesTable)
+	copyStatement := fmt.Sprintf("INSERT INTO %s (%s, last_returned_at_ms) SELECT %s, CASE WHEN last_access_at_ms > created_at_ms THEN last_access_at_ms END FROM %s", handlesUpgradeTable, columns, columns, handlesTable)
 	if err := tx.Exec(copyStatement).Error; err != nil {
 		return storageError("copy_handles", err)
 	}

@@ -31,6 +31,7 @@ const (
 	ConditionReconnectRequired         Condition = "reconnect_required"
 	ConditionNewThreadRequired         Condition = "new_thread_required"
 	ConditionStateStoreUnavailable     Condition = "state_store_unavailable"
+	ConditionCookieCapacityExhausted   Condition = "cookie_capacity_exhausted"
 	ConditionProtocolInvalid           Condition = "protocol_invalid"
 	ConditionInternalFailure           Condition = "internal_failure"
 )
@@ -43,6 +44,7 @@ const (
 	ErrorCodeReconnectRequired         ErrorCode = "CODEX_RECONNECT_REQUIRED"
 	ErrorCodeNewThreadRequired         ErrorCode = "CODEX_NEW_THREAD_REQUIRED"
 	ErrorCodeStateStoreUnavailable     ErrorCode = "CODEX_STATE_STORE_UNAVAILABLE"
+	ErrorCodeCookieCapacityExhausted   ErrorCode = "CODEX_COOKIE_CAPACITY_EXHAUSTED"
 	ErrorCodeProtocolInvalid           ErrorCode = "CODEX_PROTOCOL_INVALID"
 	ErrorCodeInternal                  ErrorCode = "INTERNAL_ERROR"
 )
@@ -62,6 +64,9 @@ const continuityRoutingConflictClientMessage = "Codex conversation is bound to a
 // recovery is the same over HTTP and WebSocket. Empty means the adapter owns
 // carrier-specific wording.
 func ClientMessage(condition Condition) string {
+	if condition == ConditionCookieCapacityExhausted {
+		return "Codex provider Cookie storage capacity is exhausted; retry after active requests finish"
+	}
 	if condition == ConditionContinuityRoutingConflict {
 		return continuityRoutingConflictClientMessage
 	}
@@ -201,6 +206,11 @@ func classifyCondition(root error) (Condition, bool) {
 		}
 	}
 
+	var limit *providercookie.LimitError
+	if errors.As(root, &limit) && (limit.Limit == providercookie.LimitHandleBindingsGlobal || limit.Limit == providercookie.LimitGlobalEntries) {
+		return ConditionCookieCapacityExhausted, true
+	}
+
 	var persistenceError *providercookie.PersistenceError
 	if errors.As(root, &persistenceError) && persistenceError != nil {
 		switch persistenceError.Kind {
@@ -232,6 +242,7 @@ func normalizedCondition(condition Condition) Condition {
 		ConditionReconnectRequired,
 		ConditionNewThreadRequired,
 		ConditionStateStoreUnavailable,
+		ConditionCookieCapacityExhausted,
 		ConditionProtocolInvalid,
 		ConditionInternalFailure:
 		return condition
@@ -274,6 +285,8 @@ func contractFor(condition Condition) contract {
 			webSocketCloseCode: websocket.StatusPolicyViolation,
 			recoveryAction:     RecoveryActionNewThread,
 		}
+	case ConditionCookieCapacityExhausted:
+		return contract{condition: condition, httpStatus: http.StatusServiceUnavailable, errorCode: ErrorCodeCookieCapacityExhausted, webSocketCloseCode: websocket.StatusTryAgainLater, recoveryAction: RecoveryActionRetry}
 	case ConditionStateStoreUnavailable:
 		return contract{
 			condition:          condition,

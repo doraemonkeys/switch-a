@@ -46,7 +46,7 @@ func TestMultiConnectionMergesIsolateUncommittedChangesAndPreserveCommittedKeys(
 	now := time.Date(2026, 8, 27, 7, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "multi-connection", testOwner(t, keyring, "owner"), now)
 	policy := providercookie.DefaultPolicy()
-	if err := first.CreateBinding(ctx, record, policy); err != nil {
+	if err := first.seedBinding(ctx, record, policy); err != nil {
 		t.Fatal(databaseFailure(err))
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "multi-connection"))

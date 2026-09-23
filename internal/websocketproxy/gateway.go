@@ -287,9 +287,6 @@ func (h *Gateway) Handle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 		defer codexOperation.DiscardCookies()
 		selectReq.ClientScope = codexOperation.ClientScope()
-		if setCookie := codexOperation.GatewaySetCookie(); setCookie != "" {
-			w.Header().Add("Set-Cookie", setCookie)
-		}
 		applyCodexWebSocketRouteConstraint(selectReq, codexOperation)
 		disguiseSession, err = h.beginDisguiseSession(ctx, r.Header, codexOperation.ClientIdentity().ID, requestID, startTime)
 		if err != nil {

@@ -41,6 +41,9 @@ func (r *Repository) Merge(
 
 	var result providercookie.MergeResult
 	err = withImmediateTransaction(ctx, r.database, r.busyTimeout, func(connection *sql.Conn) error {
+		if _, err := r.cleanupStale(ctx, connection, at, policy.OrphanAuthorityGrace); err != nil {
+			return err
+		}
 		merged, mergeErr := r.mergeTransaction(ctx, connection, scope, authority, changes, at, policy)
 		if mergeErr == nil {
 			result = merged
@@ -59,9 +62,6 @@ func (r *Repository) mergeTransaction(
 	at time.Time,
 	policy providercookie.Policy,
 ) (providercookie.MergeResult, error) {
-	if _, err := cleanupStale(ctx, connection, at, policy.OrphanAuthorityGrace); err != nil {
-		return providercookie.MergeResult{}, err
-	}
 	if err := requireJar(ctx, connection, scope.JarID()); err != nil {
 		return providercookie.MergeResult{}, err
 	}
@@ -83,7 +83,8 @@ func (r *Repository) mergeTransaction(
 	if err != nil {
 		return providercookie.MergeResult{}, err
 	}
-	if err := enforceGlobalCapacity(ctx, connection, policy.MaxCookieEntriesGlobal); err != nil {
+	result.ReclaimedBindings, err = r.reclaimCapacity(ctx, connection, scope.JarID(), policy)
+	if err != nil {
 		return providercookie.MergeResult{}, err
 	}
 	return result, nil
@@ -126,21 +127,6 @@ func (r *Repository) applyMutations(
 		result.Upserted++
 	}
 	return result, authorityExists, nil
-}
-
-func enforceGlobalCapacity(ctx context.Context, connection *sql.Conn, maximum int) error {
-	var globalEntries int
-	if err := connection.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+entriesTable).Scan(&globalEntries); err != nil {
-		return classifyDatabaseError("count_global_cookies", err)
-	}
-	if globalEntries > maximum {
-		return &providercookie.LimitError{
-			Limit:  providercookie.LimitGlobalEntries,
-			Max:    maximum,
-			Actual: globalEntries,
-		}
-	}
-	return nil
 }
 
 func authorityExists(ctx context.Context, connection *sql.Conn, scope providercookie.CookieScope, authority []byte) (bool, error) {

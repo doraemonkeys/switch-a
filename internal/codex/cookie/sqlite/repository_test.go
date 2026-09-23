@@ -196,7 +196,7 @@ func TestSchemaBindingOwnershipAndCapacity(t *testing.T) {
 	owner := testOwner(t, keyring, "a")
 	record := testBinding(t, keyring, "a", owner, now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,7 +225,7 @@ func TestSchemaBindingOwnershipAndCapacity(t *testing.T) {
 	if err != nil || use.Disposition != providercookie.BindingExpired {
 		t.Fatalf("expired = %#v, %v", use, err)
 	}
-	if err := repository.CreateBinding(context.Background(), record, policy); !errors.Is(err, providercookie.ErrIdentifierClash) {
+	if err := repository.seedBinding(context.Background(), record, policy); !errors.Is(err, providercookie.ErrIdentifierClash) {
 		t.Fatalf("collision = %v", err)
 	}
 	hmacVersions, err := repository.RequiredHMACVersions(context.Background())
@@ -237,7 +237,8 @@ func TestSchemaBindingOwnershipAndCapacity(t *testing.T) {
 		t.Fatalf("AEAD versions = %v, %v", aeadVersions, err)
 	}
 	policy.MaxHandleBindingsGlobal = 1
-	if err := repository.CreateBinding(context.Background(), testBinding(t, keyring, "b", owner, now), policy); !errors.Is(err, providercookie.ErrLimitExceeded) {
+	cookie := testCookie(t, "sid", "value", now, now.Add(time.Hour))
+	if _, err := repository.CreateJar(context.Background(), testBinding(t, keyring, "b", owner, now), testAuthority(t, "capacity"), []providercookie.Mutation{providercookie.Upsert(cookie)}, policy); !errors.Is(err, providercookie.ErrLimitExceeded) {
 		t.Fatalf("handle capacity = %v", err)
 	}
 }
@@ -250,7 +251,7 @@ func TestEncryptedMergeAADTamperRollbackAndRotation(t *testing.T) {
 	owner := testOwner(t, oldKeyring, "owner")
 	record := testBinding(t, oldKeyring, "jar", owner, now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "authority"))
@@ -365,7 +366,7 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 	db := openTestDatabase(t, path)
 	repository := migrateAndOpen(t, db, keyring, 0)
 	record := testBinding(t, keyring, "restart", testOwner(t, keyring, "restart"), now)
-	if err := repository.CreateBinding(ctx, record, policy); err != nil {
+	if err := repository.seedBinding(ctx, record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "restart"))
@@ -401,7 +402,7 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatalf("restart binding = %#v, %v", use, err)
 	}
 	replacement := testBinding(t, keyring, "restart-replacement", record.ClientScope, now.Add(2*time.Minute))
-	if err := restarted.CreateBinding(ctx, replacement, policy); err != nil {
+	if err := restarted.seedBinding(ctx, replacement, policy); err != nil {
 		t.Fatalf("create independent same-scope binding: %v", err)
 	}
 	var bindingCount int64
@@ -410,7 +411,7 @@ func TestPersistenceSurvivesRepositoryRestart(t *testing.T) {
 	}
 }
 
-func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
+func TestCreateJarKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 	ctx := context.Background()
 	db := openSingleWriterTestDatabase(t, filepath.Join(t.TempDir(), "concurrent-bind.db"))
 	keyring := testKeyring(t, "a1")
@@ -425,6 +426,9 @@ func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 	for index := range proposals {
 		proposals[index] = testBinding(t, keyring, fmt.Sprintf("concurrent-bind-%02d", index), owner, now)
 	}
+	created := make([]providercookie.CreatedJar, workers)
+	authority := testAuthority(t, "concurrent")
+	cookie := testCookie(t, "sid", "value", now, now.Add(time.Hour))
 	errorsFound := make([]error, workers)
 	start := make(chan struct{})
 	var group sync.WaitGroup
@@ -433,7 +437,7 @@ func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 		go func(index int) {
 			defer group.Done()
 			<-start
-			errorsFound[index] = repository.CreateBinding(ctx, proposals[index], policy)
+			created[index], errorsFound[index] = repository.CreateJar(ctx, proposals[index], authority, []providercookie.Mutation{providercookie.Upsert(cookie)}, policy)
 		}(index)
 	}
 	close(start)
@@ -451,7 +455,10 @@ func TestCreateBindingKeepsConcurrentMissingHandlesIndependent(t *testing.T) {
 
 	otherOwner := testOwner(t, keyring, "concurrent-bind-other")
 	otherProposal := testBinding(t, keyring, "concurrent-bind-capacity", otherOwner, now)
-	if err := repository.CreateBinding(ctx, otherProposal, policy); !errors.Is(err, providercookie.ErrLimitExceeded) {
+	for _, jar := range created {
+		defer jar.Release()
+	}
+	if _, err := repository.CreateJar(ctx, otherProposal, authority, []providercookie.Mutation{providercookie.Upsert(cookie)}, policy); !errors.Is(err, providercookie.ErrLimitExceeded) {
 		t.Fatalf("additional handle capacity = %v", err)
 	}
 }
@@ -487,7 +494,7 @@ func TestMergeRollsBackOnCryptoFailure(t *testing.T) {
 	now := time.Date(2026, 8, 27, 6, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "rollback", testOwner(t, keyring, "owner"), now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "rollback"))
@@ -514,7 +521,7 @@ func TestConcurrentPerKeyMergesPreserveDifferentKeysAndSerializeSameKey(t *testi
 	now := time.Date(2026, 8, 27, 7, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "concurrent", testOwner(t, keyring, "owner"), now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "concurrent"))
@@ -608,7 +615,7 @@ func TestAccessTimesRemainMonotonicAtSQLCommitBoundaries(t *testing.T) {
 	created := time.Date(2026, 8, 27, 8, 0, 0, 0, time.UTC)
 	owner := testOwner(t, keyring, "monotonic")
 	binding := testBinding(t, keyring, "monotonic", owner, created)
-	if err := repository.CreateBinding(ctx, binding, policy); err != nil {
+	if err := repository.seedBinding(ctx, binding, policy); err != nil {
 		t.Fatal(err)
 	}
 
@@ -672,7 +679,7 @@ func TestAccessTimesRemainMonotonicAtSQLCommitBoundaries(t *testing.T) {
 	capOwner := testOwner(t, keyring, "absolute-cap-owner")
 	capBinding := testBinding(t, keyring, "absolute-cap", capOwner, created)
 	capBinding.AbsoluteExpiresAt = created.Add(6 * 24 * time.Hour)
-	if err := repository.CreateBinding(ctx, capBinding, policy); err != nil {
+	if err := repository.seedBinding(ctx, capBinding, policy); err != nil {
 		t.Fatal(err)
 	}
 	nearAbsolute := created.Add(4 * 24 * time.Hour)
@@ -759,7 +766,7 @@ func TestCleanupReachabilityTouchAndDeterministicCapacity(t *testing.T) {
 	owner := testOwner(t, keyring, "owner")
 	record := testBinding(t, keyring, "cleanup", owner, now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 	authorityA := testAuthority(t, "cleanup-a")
@@ -792,6 +799,12 @@ func TestCleanupReachabilityTouchAndDeterministicCapacity(t *testing.T) {
 		t.Fatalf("orphan cleanup = %#v, %v", result, err)
 	}
 
+	if result.EmptyBindings != 1 {
+		t.Fatalf("empty binding was not reclaimed: %+v", result)
+	}
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
+		t.Fatal(err)
+	}
 	evictionPolicy := policy
 	evictionPolicy.MaxCookiesPerAuthority = 1
 	evictionPolicy.MaxCookiesPerJar = 2
@@ -821,11 +834,15 @@ func TestCleanupReachabilityTouchAndDeterministicCapacity(t *testing.T) {
 		t.Fatalf("evicted authority still readable = %#v, %v", snapshot.Cookies(), err)
 	}
 
+	use, err := repository.UseBinding(context.Background(), providercookie.BindingLookup{HandleDigests: []codexkeyring.Digest{record.HandleDigest}, ClientScopes: []codexidentity.ClientScope{owner}, At: now.Add(5 * time.Hour), Policy: policy})
+	if err != nil || use.Release == nil {
+		t.Fatalf("acquire = %+v, %v", use, err)
+	}
 	globalPolicy := evictionPolicy
 	globalPolicy.MaxCookiesPerJar = 1
 	globalPolicy.MaxCookieEntriesGlobal = 1
 	otherRecord := testBinding(t, keyring, "other", testOwner(t, keyring, "other-owner"), now.Add(5*time.Hour))
-	if err := repository.CreateBinding(context.Background(), otherRecord, globalPolicy); err != nil {
+	if err := repository.seedBinding(context.Background(), otherRecord, globalPolicy); err != nil {
 		t.Fatal(err)
 	}
 	otherScope, _ := providercookie.NewCookieScope(otherRecord.JarID, testAuthority(t, "other"))
@@ -838,6 +855,7 @@ func TestCleanupReachabilityTouchAndDeterministicCapacity(t *testing.T) {
 		t.Fatalf("capacity rollback = %#v, %v", snapshot.Cookies(), err)
 	}
 
+	use.Release()
 	expiryResult, err := repository.Cleanup(context.Background(), providercookie.CleanupRequest{
 		At: now.Add(181 * 24 * time.Hour), Policy: policy,
 	})
@@ -853,7 +871,7 @@ func TestBusyDatabaseFailsClosedAndTombstoneDeletesPerKey(t *testing.T) {
 	now := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
 	record := testBinding(t, keyring, "busy", testOwner(t, keyring, "owner"), now)
 	policy := providercookie.DefaultPolicy()
-	if err := repository.CreateBinding(context.Background(), record, policy); err != nil {
+	if err := repository.seedBinding(context.Background(), record, policy); err != nil {
 		t.Fatal(err)
 	}
 	scope, _ := providercookie.NewCookieScope(record.JarID, testAuthority(t, "busy"))

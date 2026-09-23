@@ -373,51 +373,6 @@ func (o *WebSocketSessionOrchestrator) applySessionLifecycleToResult(result *Web
 	}
 }
 
-func (o *WebSocketSessionOrchestrator) ensureClientAccepted(
-	w http.ResponseWriter,
-	r *http.Request,
-	negotiation websocketprotocol.Negotiation,
-) error {
-	if o.clientConn != nil {
-		return nil
-	}
-	if !negotiation.Fixed() && len(negotiation.ClientOffer()) == 0 {
-		// A protocol-free session has only one possible result. Fixing that result
-		// here keeps the downstream accept boundary explicit even without an offer.
-		next, err := negotiation.BindUpstream("")
-		if err != nil {
-			return err
-		}
-		negotiation = next
-	}
-
-	downstreamOffer, err := negotiation.DownstreamOffer()
-	if err != nil {
-		return err
-	}
-	clientConn, err := o.handler.wsForwarder.acceptClient(w, r, o.maxMessageBytes, downstreamOffer...)
-	if err != nil {
-		return err
-	}
-	if err := negotiation.ValidateDownstream(clientConn.Subprotocol()); err != nil {
-		closeWebSocketSubprotocolViolation(clientConn)
-		return err
-	}
-	// The downstream 101 is the first point where an ordinary selection becomes
-	// session state. Rejected upstream attempts retain the original full offer.
-	o.subprotocol = negotiation
-	o.clientConn = clientConn
-	o.lifecycle.MarkClientAccepted()
-	o.logSubprotocolDecision(
-		"websocket.subprotocol_downstream_accepted",
-		webSocketSubprotocolPhaseDownstreamValidation,
-		websocketprotocol.PeerDownstream,
-		clientConn.Subprotocol(),
-		nil,
-	)
-	return nil
-}
-
 func (o *WebSocketSessionOrchestrator) initializeSubprotocol(r *http.Request) *WebSocketSessionResult {
 	negotiation, err := parseWebSocketSubprotocolNegotiation(r.Header)
 	if err == nil {

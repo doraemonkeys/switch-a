@@ -14,10 +14,7 @@ import (
 
 const bindingGenerationAttempts = 4
 
-type Clock interface {
-	Now() time.Time
-}
-
+type Clock interface{ Now() time.Time }
 type wallClock struct{}
 
 func (wallClock) Now() time.Time { return time.Now() }
@@ -70,142 +67,101 @@ func NewService(config ServiceConfig) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		repository: config.Repository,
-		digester:   config.HandleDigester,
-		random:     config.Random,
-		clock:      config.Clock,
-		parser:     parser,
-		hosts:      config.HostCanonicalizer,
-		policy:     config.Policy,
-		trace:      config.Trace,
+		repository: config.Repository, digester: config.HandleDigester,
+		random: config.Random, clock: config.Clock, parser: parser,
+		hosts: config.HostCanonicalizer, policy: config.Policy, trace: config.Trace,
 	}, nil
 }
 
-type JarAccess struct {
-	jarID       JarID
-	handleValue string
-	issued      bool
-	refresh     bool
-}
-
-func (a JarAccess) JarID() JarID        { return a.jarID }
-func (a JarAccess) HandleValue() string { return a.handleValue }
-func (a JarAccess) Issued() bool        { return a.issued }
-func (a JarAccess) Refresh() bool       { return a.refresh }
-
-func (a JarAccess) String() string   { return "provider-cookie-jar-access(handle=redacted,jar=redacted)" }
-func (a JarAccess) GoString() string { return a.String() }
-
-func (s *Service) ResolveJar(
-	ctx context.Context,
-	operationID OperationID,
-	rawHandle string,
-	clientScopes []codexidentity.ClientScope,
-) (JarAccess, error) {
+// BeginRequest owns the binding lease until DiscardAll, including the interval
+// between committing cookies and publishing the response to the client.
+func (s *Service) BeginRequest(ctx context.Context, operationID OperationID, rawHandle string, clientScopes []codexidentity.ClientScope) (*Request, error) {
 	if ctx == nil {
-		return JarAccess{}, &ConfigurationError{Field: "context", Reason: "must be provided"}
+		return nil, &ConfigurationError{Field: "context", Reason: "must be provided"}
 	}
 	if _, err := NewOperationID(string(operationID)); err != nil {
-		return JarAccess{}, err
+		return nil, err
 	}
 	if err := validateClientScopes(clientScopes); err != nil {
-		return JarAccess{}, err
+		return nil, err
 	}
-
-	// Only a handle returned by the client authorizes reuse. Falling back to a
-	// client credential would silently add provider state that the client chose
-	// not to retain.
-	if rawHandle == "" {
-		return s.issueEmptyJar(ctx, operationID, clientScopes[0], "missing")
+	request := &Request{
+		service: s, operationID: operationID, clientScope: clientScopes[0],
+		overlays: make(map[CookieScope]*Overlay),
 	}
-	if !canonicalHandleValue(rawHandle) {
-		return s.issueEmptyJar(ctx, operationID, clientScopes[0], "malformed")
+	reason := "missing"
+	// A credential identifies the owner, not permission to inherit cookies.
+	// Only an explicitly returned handle authorizes persistent state reuse.
+	if rawHandle != "" {
+		reason = "malformed"
 	}
-	digests, err := s.digester.LookupDigests(codexkeyring.HMACJarHandle, []byte(rawHandle))
-	if err != nil {
-		return JarAccess{}, s.persistenceFailure(operationID, "resolve_handle", PersistenceCrypto, err)
-	}
-	use, err := s.repository.UseBinding(ctx, BindingLookup{
-		HandleDigests: digests,
-		ClientScopes:  append([]codexidentity.ClientScope(nil), clientScopes...),
-		At:            canonicalTime(s.clock.Now()),
-		Policy:        s.policy,
-	})
-	if err != nil {
-		return JarAccess{}, s.persistenceFailure(operationID, "resolve_handle", PersistenceUnavailable, err)
-	}
-	if use.Disposition != BindingValid {
-		return s.issueEmptyJar(ctx, operationID, clientScopes[0], string(use.Disposition))
-	}
-	s.trace.RecordProviderCookieTrace(TraceEvent{
-		OperationID: operationID,
-		Milestone:   "handle_resolved",
-		Decision:    "reuse",
-		Reason:      "valid",
-	})
-	return JarAccess{jarID: use.Record.JarID, handleValue: rawHandle, refresh: use.Refresh}, nil
-}
-
-func (s *Service) issueEmptyJar(
-	ctx context.Context,
-	operationID OperationID,
-	clientScope codexidentity.ClientScope,
-	reason string,
-) (JarAccess, error) {
-	for range bindingGenerationAttempts {
-		handleBytes := make([]byte, GatewayHandleEntropyBytes)
-		if _, err := io.ReadFull(s.random, handleBytes); err != nil {
-			return JarAccess{}, s.persistenceFailure(operationID, "generate_handle", PersistenceCrypto, err)
-		}
-		handleValue := base64.RawURLEncoding.EncodeToString(handleBytes)
-		clear(handleBytes)
-		digest, err := s.digester.Sign(codexkeyring.HMACJarHandle, []byte(handleValue))
+	if canonicalHandleValue(rawHandle) {
+		digests, err := s.digester.LookupDigests(codexkeyring.HMACJarHandle, []byte(rawHandle))
 		if err != nil {
-			return JarAccess{}, s.persistenceFailure(operationID, "sign_handle", PersistenceCrypto, err)
+			return nil, s.persistenceFailure(operationID, "resolve_handle", PersistenceCrypto, err)
 		}
-
-		jarBytes := make([]byte, JarIDEntropyBytes)
-		if _, err := io.ReadFull(s.random, jarBytes); err != nil {
-			return JarAccess{}, s.persistenceFailure(operationID, "generate_jar", PersistenceCrypto, err)
-		}
-		jarID, err := JarIDFromBytes(jarBytes)
-		clear(jarBytes)
-		if err != nil {
-			continue
-		}
-		now := canonicalTime(s.clock.Now())
-		record := BindingRecord{
-			HandleDigest:      digest,
-			JarID:             jarID,
-			ClientScope:       clientScope,
-			CreatedAt:         now,
-			LastAccessAt:      now,
-			IdleExpiresAt:     addDurationClamped(now, s.policy.HandleIdleTTL),
-			AbsoluteExpiresAt: addDurationClamped(now, s.policy.HandleAbsoluteTTL),
-		}
-		err = s.repository.CreateBinding(ctx, record, s.policy)
-		if err != nil {
-			if errors.Is(err, ErrIdentifierClash) {
-				continue
-			}
-			return JarAccess{}, s.persistenceFailure(operationID, "create_binding", PersistenceUnavailable, err)
-		}
-		s.trace.RecordProviderCookieTrace(TraceEvent{
-			OperationID: operationID,
-			Milestone:   "handle_resolved",
-			Decision:    "issue_empty_jar",
-			Reason:      reason,
+		use, err := s.repository.UseBinding(ctx, BindingLookup{
+			HandleDigests: digests, ClientScopes: append([]codexidentity.ClientScope(nil), clientScopes...),
+			At: canonicalTime(s.clock.Now()), Policy: s.policy,
 		})
-		return JarAccess{jarID: jarID, handleValue: handleValue, issued: true}, nil
+		if err != nil {
+			return nil, s.persistenceFailure(operationID, "resolve_handle", PersistenceUnavailable, err)
+		}
+		reason = string(use.Disposition)
+		if use.Disposition == BindingValid {
+			request.jarID = use.Record.JarID
+			request.persisted = true
+			request.handleValue = rawHandle
+			request.publishHandle = use.Refresh
+			request.release = use.Release
+			request.trace("handle_resolved", "reuse", reason, 0, 0, 0)
+			return request, nil
+		}
 	}
-	return JarAccess{}, s.persistenceFailure(operationID, "create_binding", PersistenceUnavailable, ErrIdentifierClash)
+	jarID, err := s.generateJar(operationID)
+	if err != nil {
+		return nil, err
+	}
+	request.jarID = jarID
+	request.trace("handle_resolved", "transient", reason, 0, 0, 0)
+	return request, nil
 }
 
-func (s *Service) Cleanup(
-	ctx context.Context,
-	operationID OperationID,
-	reachable []codexidentity.CookieAuthority,
-) (CleanupResult, error) {
+func (s *Service) generateJar(operationID OperationID) (JarID, error) {
+	for range bindingGenerationAttempts {
+		value := make([]byte, JarIDEntropyBytes)
+		if _, err := io.ReadFull(s.random, value); err != nil {
+			return JarID{}, s.persistenceFailure(operationID, "generate_jar", PersistenceCrypto, err)
+		}
+		id, err := JarIDFromBytes(value)
+		clear(value)
+		if err == nil {
+			return id, nil
+		}
+	}
+	return JarID{}, s.persistenceFailure(operationID, "generate_jar", PersistenceCrypto, ErrIdentifierClash)
+}
+
+func (s *Service) newBinding(operationID OperationID, jarID JarID, owner codexidentity.ClientScope, at time.Time) (BindingRecord, string, error) {
+	value := make([]byte, GatewayHandleEntropyBytes)
+	if _, err := io.ReadFull(s.random, value); err != nil {
+		return BindingRecord{}, "", s.persistenceFailure(operationID, "generate_handle", PersistenceCrypto, err)
+	}
+	handle := base64.RawURLEncoding.EncodeToString(value)
+	clear(value)
+	digest, err := s.digester.Sign(codexkeyring.HMACJarHandle, []byte(handle))
+	if err != nil {
+		return BindingRecord{}, "", s.persistenceFailure(operationID, "sign_handle", PersistenceCrypto, err)
+	}
+	return BindingRecord{
+		HandleDigest: digest, JarID: jarID, ClientScope: owner,
+		CreatedAt: at, LastAccessAt: at,
+		IdleExpiresAt:     addDurationClamped(at, s.policy.HandleIdleTTL),
+		AbsoluteExpiresAt: addDurationClamped(at, s.policy.HandleAbsoluteTTL),
+	}, handle, nil
+}
+
+func (s *Service) Cleanup(ctx context.Context, operationID OperationID, reachable []codexidentity.CookieAuthority) (CleanupResult, error) {
 	if ctx == nil {
 		return CleanupResult{}, &ConfigurationError{Field: "context", Reason: "must be provided"}
 	}
@@ -213,39 +169,37 @@ func (s *Service) Cleanup(
 		return CleanupResult{}, err
 	}
 	result, err := s.repository.Cleanup(ctx, CleanupRequest{
-		At:                   canonicalTime(s.clock.Now()),
-		Policy:               s.policy,
+		At: canonicalTime(s.clock.Now()), Policy: s.policy,
 		ReachableAuthorities: append([]codexidentity.CookieAuthority(nil), reachable...),
 	})
 	if err != nil {
 		return CleanupResult{}, s.persistenceFailure(operationID, "cleanup", PersistenceUnavailable, err)
 	}
 	s.trace.RecordProviderCookieTrace(TraceEvent{
-		OperationID: operationID,
-		Milestone:   "cleanup_completed",
-		Decision:    "committed",
-		Count:       result.ExpiredBindings + result.ExpiredCookies + result.OrphanAuthorities + result.EmptyAuthorities,
+		OperationID: operationID, Milestone: "cleanup_completed", Decision: "committed",
+		Count:             result.ExpiredBindings + result.EmptyBindings + result.ExpiredCookies + result.OrphanAuthorities + result.EmptyAuthorities,
+		ReclaimedBindings: result.ExpiredBindings + result.EmptyBindings,
 	})
 	return result, nil
 }
 
-func (s *Service) persistenceFailure(
-	operationID OperationID,
-	operation string,
-	kind PersistenceErrorKind,
-	cause error,
-) error {
+func (s *Service) persistenceFailure(operationID OperationID, operation string, kind PersistenceErrorKind, cause error) error {
+	var limit *LimitError
+	if errors.As(cause, &limit) {
+		s.trace.RecordProviderCookieTrace(TraceEvent{
+			OperationID: operationID, Milestone: operation, Decision: "capacity_rejected",
+			Reason: "capacity_exhausted", Limit: limit.Limit, Actual: limit.Actual, Maximum: limit.Max,
+		})
+		return limit
+	}
 	var typed *PersistenceError
 	if errors.As(cause, &typed) {
 		kind = typed.Kind
 	}
 	s.trace.RecordProviderCookieTrace(TraceEvent{
-		OperationID: operationID,
-		Milestone:   operation,
-		Decision:    "failed_closed",
-		Reason:      string(kind),
+		OperationID: operationID, Milestone: operation, Decision: "failed_closed", Reason: string(kind),
 	})
-	if errors.As(cause, &typed) {
+	if typed != nil {
 		return typed
 	}
 	return &PersistenceError{Kind: kind, Operation: operation, Cause: cause}
@@ -273,8 +227,5 @@ func canonicalHandleValue(value string) bool {
 		return false
 	}
 	decoded, err := base64.RawURLEncoding.Strict().DecodeString(value)
-	if err != nil || len(decoded) != GatewayHandleEntropyBytes {
-		return false
-	}
-	return base64.RawURLEncoding.EncodeToString(decoded) == value
+	return err == nil && len(decoded) == GatewayHandleEntropyBytes && base64.RawURLEncoding.EncodeToString(decoded) == value
 }

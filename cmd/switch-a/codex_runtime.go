@@ -221,6 +221,11 @@ func providerCookieLogTrace(log *zap.Logger) providercookie.TraceSink {
 			zap.Int("count", event.Count),
 			zap.Int("rejected", event.Rejected),
 			zap.Int("evicted", event.Evicted),
+			zap.Int("reclaimed_bindings", event.ReclaimedBindings),
+			zap.String("lifecycle", event.Lifecycle),
+			zap.String("limit", string(event.Limit)),
+			zap.Int("actual", event.Actual),
+			zap.Int("maximum", event.Maximum),
 		)
 	})
 }

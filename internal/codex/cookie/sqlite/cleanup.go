@@ -31,7 +31,7 @@ func (r *Repository) Cleanup(ctx context.Context, request providercookie.Cleanup
 
 	var result providercookie.CleanupResult
 	err := withImmediateTransaction(ctx, r.database, r.busyTimeout, func(connection *sql.Conn) error {
-		cleaned, cleanupErr := cleanupTransaction(ctx, connection, request, reachable)
+		cleaned, cleanupErr := r.cleanupTransaction(ctx, connection, request, reachable)
 		if cleanupErr == nil {
 			result = cleaned
 		}
@@ -46,13 +46,13 @@ type authorityReachabilityRow struct {
 	unreachable sql.NullInt64
 }
 
-func cleanupTransaction(
+func (r *Repository) cleanupTransaction(
 	ctx context.Context,
 	connection *sql.Conn,
 	request providercookie.CleanupRequest,
 	reachable [][]byte,
 ) (providercookie.CleanupResult, error) {
-	result, err := cleanupStale(ctx, connection, request.At, request.Policy.OrphanAuthorityGrace)
+	result, err := r.cleanupStale(ctx, connection, request.At, request.Policy.OrphanAuthorityGrace)
 	if err != nil {
 		return providercookie.CleanupResult{}, err
 	}
@@ -63,7 +63,7 @@ func cleanupTransaction(
 	if err := applyAuthorityReachability(ctx, connection, items, reachable, request.At); err != nil {
 		return providercookie.CleanupResult{}, err
 	}
-	final, err := cleanupStale(ctx, connection, request.At, request.Policy.OrphanAuthorityGrace)
+	final, err := r.cleanupStale(ctx, connection, request.At, request.Policy.OrphanAuthorityGrace)
 	if err != nil {
 		return providercookie.CleanupResult{}, err
 	}
@@ -71,7 +71,8 @@ func cleanupTransaction(
 	result.ExpiredCookies += final.ExpiredCookies
 	result.OrphanAuthorities += final.OrphanAuthorities
 	result.EmptyAuthorities += final.EmptyAuthorities
-	return result, nil
+	result.EmptyBindings, err = r.deleteEmptyBindings(ctx, connection)
+	return result, err
 }
 
 func loadAuthorityReachability(ctx context.Context, connection *sql.Conn) ([]authorityReachabilityRow, error) {
@@ -127,7 +128,7 @@ func applyAuthorityReachability(
 	return nil
 }
 
-func cleanupStale(
+func (r *Repository) cleanupStale(
 	ctx context.Context,
 	connection *sql.Conn,
 	at time.Time,
@@ -165,6 +166,9 @@ func cleanupStale(
 		return result, classifyDatabaseError("find_expired_bindings", err)
 	}
 	for _, jar := range jars {
+		if r.activity.active(jar) {
+			continue
+		}
 		if err := deleteJar(ctx, connection, jar); err != nil {
 			return result, err
 		}
@@ -190,6 +194,9 @@ func cleanupStale(
 		return result, classifyDatabaseError("find_orphan_authorities", err)
 	}
 	for _, item := range orphans {
+		if r.activity.active(item.jar) {
+			continue
+		}
 		if _, err := deleteAuthority(ctx, connection, item.jar, item.authority); err != nil {
 			return result, err
 		}

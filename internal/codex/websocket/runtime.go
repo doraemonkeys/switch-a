@@ -41,8 +41,7 @@ type Continuity interface {
 }
 
 type ProviderCookies interface {
-	ResolveJar(context.Context, providercookie.OperationID, string, []codexidentity.ClientScope) (providercookie.JarAccess, error)
-	BeginRequest(providercookie.OperationID, providercookie.JarAccess) (*providercookie.Request, error)
+	BeginRequest(context.Context, providercookie.OperationID, string, []codexidentity.ClientScope) (*providercookie.Request, error)
 }
 
 type ExternalSchemeResolver interface {

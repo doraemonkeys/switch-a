@@ -88,68 +88,91 @@ func TestServiceCoversRefreshCleanupCollisionAndCryptoFailureBranches(t *testing
 	now := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
 	clock := &serviceClock{now: now}
 	repository := newMemoryRepository()
-	trace := &traceRecorder{}
-	service := newTestService(t, repository, clock, deterministicRandom(), trace)
-	operation, _ := NewOperationID("coverage-service")
+	service := newTestService(t, repository, clock, nil, nil)
 	owner := testClientScope(t, "coverage-owner")
-
 	repository.createErr = fmt.Errorf("wrapped collision: %w", ErrIdentifierClash)
-	access, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil || !access.Issued() {
-		t.Fatalf("collision retry = %#v, %v", access, err)
-	}
-	if access.String() != access.GoString() || !strings.Contains(access.String(), "redacted") {
-		t.Fatalf("JarAccess formatting leaked: %#v", access)
-	}
-
-	digest, _ := testDigester{version: "h1"}.Sign(codexkeyring.HMACJarHandle, []byte(access.HandleValue()))
+	request := beginTestRequest(t, service, "", owner)
+	commitTestCookie(t, request)
+	digest, _ := testDigester{version: "h1"}.Sign(codexkeyring.HMACJarHandle, []byte(request.handleValue))
 	record := repository.bindings[digest]
 	record.IdleExpiresAt = now.Add(time.Hour)
 	repository.bindings[digest] = record
-	reused, err := service.ResolveJar(context.Background(), operation, access.HandleValue(), []codexidentity.ClientScope{owner})
-	if err != nil || !reused.Refresh() || reused.Issued() {
-		t.Fatalf("refresh resolve = %#v, %v", reused, err)
+	reused := beginTestRequest(t, service, request.handleValue, owner)
+	if !reused.publishHandle {
+		t.Fatal("near-expiry handle did not refresh")
 	}
-
-	result, err := service.Cleanup(context.Background(), operation, []codexidentity.CookieAuthority{mustCookieAuthority(t, "reachable")})
+	if _, err := reused.Commit(context.Background(), mustCookieAuthority(t, "seed")); err != nil {
+		t.Fatal(err)
+	}
+	scheme, _ := NewResolvedExternalScheme("https")
+	if header, err := reused.GatewaySetCookie(scheme); err != nil || header == "" {
+		t.Fatalf("refresh header = %q, %v", header, err)
+	}
+	if _, err := reused.GatewaySetCookie(ResolvedExternalScheme{}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("invalid scheme = %v", err)
+	}
+	result, err := service.Cleanup(context.Background(), "cleanup", []codexidentity.CookieAuthority{mustCookieAuthority(t, "reachable")})
 	if err != nil || result.ExpiredBindings != 1 || result.ExpiredCookies != 2 {
 		t.Fatalf("cleanup = %#v, %v", result, err)
 	}
-	if _, err := service.Cleanup(missingContext, operation, nil); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("nil cleanup context = %v", err)
+	if _, err := service.Cleanup(missingContext, "cleanup", nil); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("nil context = %v", err)
 	}
 	if _, err := service.Cleanup(context.Background(), "", nil); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("invalid cleanup operation = %v", err)
+		t.Fatalf("invalid operation = %v", err)
 	}
+	if _, err := service.BeginRequest(context.Background(), "request", "", []codexidentity.ClientScope{owner, owner}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("duplicate owner = %v", err)
+	}
+	if _, err := service.BeginRequest(context.Background(), "request", "", []codexidentity.ClientScope{{}}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invalid owner = %v", err)
+	}
+}
 
-	collisionRepository := newMemoryRepository()
-	collisionRepository.createAlways = fmt.Errorf("wrapped: %w", ErrIdentifierClash)
-	collisionService := newTestService(t, collisionRepository, clock, deterministicRandom(), nil)
-	if _, err := collisionService.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrStorage) {
-		t.Fatalf("collision exhaustion = %v", err)
-	}
-
-	signService, err := NewService(ServiceConfig{
-		Repository: collisionRepository, HandleDigester: testDigester{version: "h1", err: errors.New("sign unavailable")},
-		Random: deterministicRandom(), Clock: clock, HostCanonicalizer: testHosts,
-		PublicSuffixList: testSuffixes, Policy: DefaultPolicy(), Trace: TraceSinkFunc(func(TraceEvent) {}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := signService.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
-		t.Fatalf("sign failure = %v", err)
-	}
-	shortRandomService := newTestService(t, newMemoryRepository(), clock, bytes.NewReader(make([]byte, GatewayHandleEntropyBytes)), discardTrace{})
-	if _, err := shortRandomService.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
-		t.Fatalf("Jar entropy failure = %v", err)
-	}
-	zeroJarService := newTestService(t, newMemoryRepository(), clock, bytes.NewReader(make([]byte, GatewayHandleEntropyBytes+JarIDEntropyBytes)), nil)
-	if _, err := zeroJarService.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
-		t.Fatalf("zero JarID retry = %v", err)
-	}
-	if _, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner, owner}); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("duplicate owner scope = %v", err)
+func TestDeferredBindingFailureDoesNotPublishAHandle(t *testing.T) {
+	for _, failure := range []string{"collision", "sign", "entropy", "zero jar", "capacity"} {
+		t.Run(failure, func(t *testing.T) {
+			repository := newMemoryRepository()
+			trace := &traceRecorder{}
+			service := newTestService(t, repository, &serviceClock{now: time.Now()}, nil, trace)
+			request := beginTestRequest(t, service, "", testClientScope(t, "owner"))
+			authority := mustCookieAuthority(t, "failure")
+			if _, err := request.ApplyResponse(authority, mustURL(t, "https://example.com"), []string{"sid=value"}); err != nil {
+				t.Fatal(err)
+			}
+			want := ErrCrypto
+			switch failure {
+			case "collision":
+				repository.createAlways = ErrIdentifierClash
+				want = ErrStorage
+			case "sign":
+				service.digester = testDigester{err: errors.New("sign unavailable")}
+			case "entropy":
+				service.random = bytes.NewReader(nil)
+			case "zero jar":
+				repository.createAlways = ErrIdentifierClash
+				service.random = bytes.NewReader(make([]byte, GatewayHandleEntropyBytes+bindingGenerationAttempts*JarIDEntropyBytes))
+			case "capacity":
+				repository.createAlways = &LimitError{Limit: LimitHandleBindingsGlobal, Max: 1, Actual: 2}
+				want = ErrLimitExceeded
+			}
+			if _, err := request.Commit(context.Background(), authority); !errors.Is(err, want) {
+				t.Fatalf("commit = %v, want %v", err, want)
+			}
+			scheme, _ := NewResolvedExternalScheme("https")
+			if header, err := request.GatewaySetCookie(scheme); err != nil || header != "" {
+				t.Fatalf("failed commit published %q: %v", header, err)
+			}
+			if len(repository.bindings) != 0 {
+				t.Fatal("failed commit leaked binding")
+			}
+			if failure == "capacity" {
+				event := trace.events[len(trace.events)-1]
+				if event.Limit != LimitHandleBindingsGlobal || event.Maximum != 1 || event.Actual != 2 {
+					t.Fatalf("capacity trace = %+v", event)
+				}
+			}
+		})
 	}
 }
 
@@ -168,17 +191,10 @@ func TestRequestBoundaryFailuresAndLifecycleValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	operation, _ := NewOperationID("coverage-request")
-	access, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{testClientScope(t, "request")})
+	request, err := service.BeginRequest(context.Background(), operation, "", []codexidentity.ClientScope{testClientScope(t, "request")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.BeginRequest("", access); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("invalid request operation = %v", err)
-	}
-	if _, err := service.BeginRequest(operation, JarAccess{}); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("empty access = %v", err)
-	}
-	request, _ := service.BeginRequest(operation, access)
 	authority := mustCookieAuthority(t, "boundary")
 	if _, err := request.ApplyResponse(authority, mustURL(t, "https://example.com"), []string{"a=1", "b=2"}); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("response boundary = %v", err)

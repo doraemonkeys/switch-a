@@ -33,24 +33,16 @@ func (r *Runtime) beginProviderCookies(ctx context.Context, op *Operation, reque
 	if err != nil {
 		return cookieFailure("provider_cookie", err)
 	}
-	access, err := r.providerCookies.ResolveJar(ctx, cookieOperationID, gatewayHandle(request), op.clientScopes)
-	if err != nil {
-		return cookieFailure("resolve_cookie_jar", err)
-	}
-	op.cookieBoundary.request, err = r.providerCookies.BeginRequest(cookieOperationID, access)
+	op.cookieBoundary.request, err = r.providerCookies.BeginRequest(ctx, cookieOperationID, gatewayHandle(request), op.clientScopes)
 	if err != nil {
 		return cookieFailure("begin_cookie_request", err)
 	}
-	if !access.Issued() && !access.Refresh() {
-		return nil
-	}
-	handle, err := providercookie.NewGatewayHandleCookie(access.HandleValue(), scheme)
+	// Reservation can fail before any upgrade is attempted. Keep that failure
+	// in admission, where the gateway can still send a structured HTTP error.
+	op.cookieBoundary.gatewayHeader, err = op.cookieBoundary.request.ReserveUpgradeCookie(scheme)
 	if err != nil {
-		return cookieFailure("gateway_cookie", err)
-	}
-	op.cookieBoundary.gatewayHeader, err = handle.HeaderValue()
-	if err != nil {
-		return cookieFailure("gateway_cookie", err)
+		op.cookieBoundary.request.DiscardAll()
+		return cookieFailure("reserve_cookie_handle", err)
 	}
 	return nil
 }
@@ -59,6 +51,8 @@ func (o *Operation) GatewaySetCookie() string {
 	if o == nil {
 		return ""
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	return o.cookieBoundary.gatewayHeader
 }
 
@@ -138,10 +132,6 @@ func (o *Operation) DiscardCookies() {
 		return
 	}
 	o.mu.Lock()
-	if o.cookieBoundary.closed {
-		o.mu.Unlock()
-		return
-	}
 	o.cookieBoundary.closed = true
 	o.mu.Unlock()
 	o.cookieBoundary.request.DiscardAll()

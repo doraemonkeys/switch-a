@@ -175,7 +175,7 @@ func TestApplicationCodexMaintenanceCatalogDrivesOrphanGraceAndReachableRecovery
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err := cookies.ResolveJar(ctx, "issue", "", []codexidentity.ClientScope{clientScope})
+	request, err := cookies.BeginRequest(ctx, "seed-cookie", "", []codexidentity.ClientScope{clientScope})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,10 +187,6 @@ func TestApplicationCodexMaintenanceCatalogDrivesOrphanGraceAndReachableRecovery
 	if err != nil || len(reachable) != 1 {
 		t.Fatalf("initial reachable = %+v, %v", reachable, err)
 	}
-	request, err := cookies.BeginRequest("seed-cookie", access)
-	if err != nil {
-		t.Fatal(err)
-	}
 	responseURL, _ := url.Parse("https://cookie.example/v1/responses")
 	if _, err := request.ApplyResponse(reachable[0], responseURL, []string{"sid=value; Max-Age=7776000; Path=/"}); err != nil {
 		t.Fatal(err)
@@ -199,6 +195,7 @@ func TestApplicationCodexMaintenanceCatalogDrivesOrphanGraceAndReachableRecovery
 		t.Fatal(err)
 	}
 
+	request.DiscardAll()
 	if err := persistence.DeleteProvider(ctx, provider.ID); err != nil {
 		t.Fatal(err)
 	}

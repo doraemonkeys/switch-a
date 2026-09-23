@@ -22,6 +22,7 @@ type expectedContract struct {
 }
 
 var frozenContracts = []expectedContract{
+	{codexrecovery.ConditionCookieCapacityExhausted, http.StatusServiceUnavailable, codexrecovery.ErrorCodeCookieCapacityExhausted, websocket.StatusTryAgainLater, codexrecovery.RecoveryActionRetry},
 	{codexrecovery.ConditionStateConflict, http.StatusConflict, codexrecovery.ErrorCodeStateConflict, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionNewThread},
 	{codexrecovery.ConditionContinuityRoutingConflict, http.StatusConflict, codexrecovery.ErrorCodeContinuityRoutingConflict, websocket.StatusPolicyViolation, codexrecovery.RecoveryActionNewThread},
 	{codexrecovery.ConditionReconnectRequired, http.StatusConflict, codexrecovery.ErrorCodeReconnectRequired, websocket.StatusServiceRestart, codexrecovery.RecoveryActionReconnect},

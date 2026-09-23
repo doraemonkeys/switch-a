@@ -62,12 +62,20 @@ func (r *cookieTestRepository) UseBinding(_ context.Context, lookup providercook
 	return providercookie.BindingUse{Disposition: providercookie.BindingUnknown}, nil
 }
 
-func (r *cookieTestRepository) CreateBinding(_ context.Context, record providercookie.BindingRecord, _ providercookie.Policy) error {
+func (r *cookieTestRepository) CreateJar(ctx context.Context, record providercookie.BindingRecord, authority codexidentity.CookieAuthority, changes []providercookie.Mutation, policy providercookie.Policy) (providercookie.CreatedJar, error) {
 	if _, exists := r.bindings[record.HandleDigest]; exists {
-		return providercookie.ErrIdentifierClash
+		return providercookie.CreatedJar{}, providercookie.ErrIdentifierClash
+	}
+	scope, err := providercookie.NewCookieScope(record.JarID, authority)
+	if err != nil {
+		return providercookie.CreatedJar{}, err
+	}
+	merged, err := r.Merge(ctx, scope, changes, record.CreatedAt, policy)
+	if err != nil {
+		return providercookie.CreatedJar{}, err
 	}
 	r.bindings[record.HandleDigest] = record
-	return nil
+	return providercookie.CreatedJar{Merge: merged}, nil
 }
 
 func (r *cookieTestRepository) Load(_ context.Context, scope providercookie.CookieScope, _ time.Time) (providercookie.Snapshot, error) {
@@ -120,8 +128,8 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if operation.gatewaySetCookie == "" {
-		t.Fatal("new Jar did not issue a gateway handle")
+	if operation.gatewaySetCookie != "" || len(repository.bindings) != 0 {
+		t.Fatal("transient request issued a handle or persisted a binding")
 	}
 	firstRequest := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
 	attempt, err := operation.PrepareAttempt(context.Background(), firstRequest, candidate, applied)
@@ -168,11 +176,8 @@ func TestCookieOverlayRetriesCommitAndClientScopeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondOperation.gatewaySetCookie == "" {
-		t.Fatal("missing gateway handle did not issue a replacement alias")
-	}
-	if replacement := gatewayCookieValue(t, secondOperation.gatewaySetCookie); replacement == handle {
-		t.Fatal("missing gateway handle reused its previous alias")
+	if secondOperation.gatewaySetCookie != "" || len(repository.bindings) != 1 {
+		t.Fatal("missing handle created persistent state")
 	}
 	persistedRequest := httptest.NewRequest(http.MethodPost, "https://provider.test/v1/responses", nil)
 	if _, err := secondOperation.PrepareAttempt(context.Background(), persistedRequest, candidate, applied); err != nil {
@@ -247,6 +252,9 @@ func TestCookieAuthoritySwitchDiscardsOverlayAndMergeFailureFailsGate(t *testing
 	}
 	if got := secondRequest.Header.Get("Cookie"); got != "" {
 		t.Fatalf("authority switch leaked Cookie %q", got)
+	}
+	if err := secondAttempt.ObserveResponse(&upstreamtransport.ResponseHead{SourceHeader: http.Header{"Set-Cookie": {"b=two; Path=/; Secure"}}, Header: make(http.Header)}); err != nil {
+		t.Fatal(err)
 	}
 	repository.mergeErr = errors.New("database unavailable")
 	if _, err := secondAttempt.PrepareVisible(context.Background(), make(http.Header)); !IsKind(err, ErrorDependencyUnavailable) {

@@ -19,13 +19,18 @@ func NewOperationID(value string) (OperationID, error) {
 }
 
 type TraceEvent struct {
-	OperationID OperationID
-	Milestone   string
-	Decision    string
-	Reason      string
-	Count       int
-	Rejected    int
-	Evicted     int
+	OperationID       OperationID
+	Milestone         string
+	Decision          string
+	Reason            string
+	Count             int
+	Rejected          int
+	Evicted           int
+	ReclaimedBindings int
+	Lifecycle         string
+	Limit             LimitName
+	Actual            int
+	Maximum           int
 }
 
 // TraceSink receives deliberately secret-free workflow decisions. Integrators

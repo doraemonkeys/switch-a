@@ -272,19 +272,22 @@ func (r *proxyCodexTestCookieRepository) UseBinding(
 	return providercookie.BindingUse{Disposition: providercookie.BindingUnknown}, nil
 }
 
-func (r *proxyCodexTestCookieRepository) CreateBinding(
-	_ context.Context,
-	record providercookie.BindingRecord,
-	_ providercookie.Policy,
-) error {
+func (r *proxyCodexTestCookieRepository) CreateJar(
+	_ context.Context, record providercookie.BindingRecord, authority codexidentity.CookieAuthority,
+	mutations []providercookie.Mutation, _ providercookie.Policy,
+) (providercookie.CreatedJar, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
 	if _, exists := r.bindings[record.HandleDigest]; exists {
-		return providercookie.ErrIdentifierClash
+		return providercookie.CreatedJar{}, providercookie.ErrIdentifierClash
 	}
+	scope, err := providercookie.NewCookieScope(record.JarID, authority)
+	if err != nil {
+		return providercookie.CreatedJar{}, err
+	}
+	merged := r.mergeLocked(scope, mutations)
 	r.bindings[record.HandleDigest] = record
-	return nil
+	return providercookie.CreatedJar{Merge: merged}, nil
 }
 
 func (r *proxyCodexTestCookieRepository) Load(
@@ -326,6 +329,10 @@ func (r *proxyCodexTestCookieRepository) Merge(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	return r.mergeLocked(scope, mutations), nil
+}
+
+func (r *proxyCodexTestCookieRepository) mergeLocked(scope providercookie.CookieScope, mutations []providercookie.Mutation) providercookie.MergeResult {
 	if r.cookies[scope] == nil {
 		r.cookies[scope] = make(map[providercookie.CookieKey]providercookie.StoredCookie)
 	}
@@ -339,7 +346,7 @@ func (r *proxyCodexTestCookieRepository) Merge(
 		delete(r.cookies[scope], mutation.Key())
 		result.Deleted++
 	}
-	return result, nil
+	return result
 }
 
 func (*proxyCodexTestCookieRepository) Cleanup(

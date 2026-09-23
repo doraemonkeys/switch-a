@@ -122,8 +122,8 @@ func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing
 		wantCookie string
 	}{
 		{name: "different client", client: "client-beta", handle: handle},
-		{name: "malformed handle creates empty jar", client: "client-alpha", handle: "malformed"},
-		{name: "missing handle creates empty jar", client: "client-alpha", handle: ""},
+		{name: "malformed handle stays transient", client: "client-alpha", handle: "malformed"},
+		{name: "missing handle stays transient", client: "client-alpha", handle: ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			operation, isolatedHeaders := prepareWSCookieAttempt(
@@ -133,10 +133,11 @@ func TestProviderCookieScopeIgnoresAPITypeButSeparatesJarAndAuthority(t *testing
 			if got := isolatedHeaders.Get("Cookie"); got != test.wantCookie {
 				t.Fatalf("upstream Cookie = %q, want %q", got, test.wantCookie)
 			}
-			issued := gatewayHandle(t, operation.GatewaySetCookie())
-			if issued == handle {
-				t.Fatal("fallback did not rotate the gateway handle")
+			header := operation.GatewaySetCookie()
+			if issued := gatewayHandle(t, header); issued == handle {
+				t.Fatal("fallback reused a foreign handle")
 			}
+			operation.DiscardCookies()
 		})
 	}
 }
@@ -205,28 +206,43 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		}
 	})
 
-	t.Run("global handle capacity fails both protocols closed", func(t *testing.T) {
+	t.Run("full cookie capacity does not block stateless protocols", func(t *testing.T) {
 		policy := providercookie.DefaultPolicy()
 		policy.MaxHandleBindingsGlobal = 1
-		fixture := newRuntimeFixture(t, fixtureOptions{
-			cookiePolicy: policy,
-		})
-		if _, err := fixture.http.Begin(
-			context.Background(), fixtureRequest(http.MethodPost, "client-alpha", nil),
-			testAPIType, operationID("http-cookie-capacity", 1), "preserve_conversation", testHTTPClientEvidence(nil, nil),
-		); err != nil {
-			t.Fatal(err)
+		fixture := newRuntimeFixture(t, fixtureOptions{cookiePolicy: policy})
+		candidate, applied, finalURL := fixtureCandidate(t, candidateSpec{})
+		handle := commitHTTPCookie(t, fixture, "owner", "", candidate, applied, finalURL, "sid=value; Path=/; Secure", "capacity-seed")
+		active, _ := prepareWSCookieAttempt(t, fixture, "owner", handle, candidate, applied, websocketURL(t, finalURL), "capacity-active")
+		defer active.DiscardCookies()
+		for index := range 20 {
+			op, err := fixture.http.Begin(context.Background(), fixtureRequest(http.MethodPost, "fresh", nil), testAPIType, operationID("stateless-http", index), "preserve_conversation", testHTTPClientEvidence(nil, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			upstream := fixtureRequest(http.MethodPost, "", nil)
+			upstream.URL = finalURL
+			attempt, err := op.PrepareAttempt(context.Background(), upstream, candidate, applied)
+			if err != nil {
+				t.Fatal(err)
+			}
+			headers := make(http.Header)
+			visibility, err := attempt.PrepareVisible(context.Background(), headers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := visibility.Commit(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if headers.Get("Set-Cookie") != "" {
+				t.Fatal("stateless HTTP published a handle")
+			}
+			op.Discard()
+			ws, _ := prepareWSCookieAttempt(t, fixture, "fresh", "", candidate, applied, websocketURL(t, finalURL), operationID("stateless-ws", index))
+			if err := ws.CommitCookies(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			ws.DiscardCookies()
 		}
-		_, err := fixture.ws.Begin(
-			context.Background(), fixtureRequest(http.MethodGet, "client-alpha", nil),
-			testAPIType, operationID("ws-cookie-capacity", 1), "preserve_conversation",
-		)
-		requireWSFailure(t, err, codexws.FailureStorage)
-		_, err = fixture.ws.Begin(
-			context.Background(), fixtureRequest(http.MethodGet, "client-beta", nil),
-			testAPIType, operationID("ws-cookie-capacity", 2), "preserve_conversation",
-		)
-		requireWSFailure(t, err, codexws.FailureStorage)
 	})
 
 	t.Run("cleanup retains only reachable authorities after grace", func(t *testing.T) {
@@ -251,6 +267,7 @@ func TestCookieRestartRotationCapacityAndProviderReachability(t *testing.T) {
 		if err := orphanOperation.CommitCookies(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+		orphanOperation.DiscardCookies()
 		reachable := []codexidentity.CookieAuthority{base.Authority().CookieAuthority()}
 		if _, err := fixture.cookies.Cleanup(
 			context.Background(), mustCookieOperationID(t, "cleanup-mark-unreachable"), reachable,
@@ -355,6 +372,7 @@ func commitHTTPCookie(
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer httpOperation.Discard()
 	upstream := fixtureRequest(http.MethodPost, "", nil)
 	upstream.URL = finalURL
 	attempt, err := httpOperation.PrepareAttempt(context.Background(), upstream, candidate, applied)
@@ -396,6 +414,7 @@ func prepareWSCookieAttempt(
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(wsOperation.DiscardCookies)
 	headers := request.Header.Clone()
 	if _, err := wsOperation.PrepareDial(context.Background(), headers, candidate, applied, finalURL); err != nil {
 		t.Fatal(err)

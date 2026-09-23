@@ -84,6 +84,7 @@ func (r *memoryRepository) UseBinding(_ context.Context, lookup BindingLookup) (
 		}
 		refresh := record.IdleExpiresAt.Sub(lookup.At) <= lookup.Policy.HandleRefreshWindow
 		record.LastAccessAt = lookup.At
+		record.LastReturnedAt = lookup.At
 		record.IdleExpiresAt = lookup.At.Add(lookup.Policy.HandleIdleTTL)
 		if record.AbsoluteExpiresAt.Before(record.IdleExpiresAt) {
 			record.IdleExpiresAt = record.AbsoluteExpiresAt
@@ -94,22 +95,30 @@ func (r *memoryRepository) UseBinding(_ context.Context, lookup BindingLookup) (
 	return BindingUse{Disposition: BindingUnknown}, nil
 }
 
-func (r *memoryRepository) CreateBinding(_ context.Context, record BindingRecord, _ Policy) error {
+func (r *memoryRepository) CreateJar(ctx context.Context, record BindingRecord, authority codexidentity.CookieAuthority, changes []Mutation, policy Policy) (CreatedJar, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.createAlways != nil {
-		return r.createAlways
+		return CreatedJar{}, r.createAlways
 	}
 	if r.createErr != nil {
 		err := r.createErr
 		r.createErr = nil
-		return err
+		return CreatedJar{}, err
 	}
 	if _, exists := r.bindings[record.HandleDigest]; exists {
-		return ErrIdentifierClash
+		return CreatedJar{}, ErrIdentifierClash
+	}
+	scope, err := NewCookieScope(record.JarID, authority)
+	if err != nil {
+		return CreatedJar{}, err
+	}
+	merged, err := r.mergeLocked(scope, changes, record.CreatedAt)
+	if err != nil {
+		return CreatedJar{}, err
 	}
 	r.bindings[record.HandleDigest] = record
-	return nil
+	return CreatedJar{Merge: merged}, nil
 }
 
 func (r *memoryRepository) Load(_ context.Context, scope CookieScope, _ time.Time) (Snapshot, error) {
@@ -130,9 +139,13 @@ func (r *memoryRepository) Touch(_ context.Context, _ CookieScope, _ []CookieKey
 	return r.touchErr
 }
 
-func (r *memoryRepository) Merge(_ context.Context, scope CookieScope, mutations []Mutation, _ time.Time, _ Policy) (MergeResult, error) {
+func (r *memoryRepository) Merge(_ context.Context, scope CookieScope, mutations []Mutation, at time.Time, _ Policy) (MergeResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.mergeLocked(scope, mutations, at)
+}
+
+func (r *memoryRepository) mergeLocked(scope CookieScope, mutations []Mutation, at time.Time) (MergeResult, error) {
 	if r.mergeErr != nil {
 		return MergeResult{}, r.mergeErr
 	}
@@ -141,7 +154,7 @@ func (r *memoryRepository) Merge(_ context.Context, scope CookieScope, mutations
 	}
 	result := MergeResult{}
 	for _, mutation := range mutations {
-		if cookie, ok := mutation.Cookie(); ok {
+		if cookie, ok := mutation.Cookie(); ok && !cookie.Expired(at) {
 			r.cookies[scope][mutation.Key()] = cookie
 			result.Upserted++
 		} else {
@@ -210,55 +223,74 @@ func TestServiceUsesReturnedHandleAsAuthoritativeJarIdentity(t *testing.T) {
 	repository := newMemoryRepository()
 	clock := &serviceClock{now: time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC)}
 	trace := &traceRecorder{}
-	service := newTestService(t, repository, clock, deterministicRandom(), trace)
-	operation, _ := NewOperationID("operation-handle")
+	service := newTestService(t, repository, clock, nil, trace)
 	owner := testClientScope(t, "owner-a")
-	other := testClientScope(t, "owner-b")
-
-	first, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil || !first.Issued() || first.HandleValue() == "" {
-		t.Fatalf("first resolve = %#v, %v", first, err)
+	first := beginTestRequest(t, service, "", owner)
+	if first.persisted || first.handleValue != "" || len(repository.bindings) != 0 {
+		t.Fatal("begin persisted an empty jar")
 	}
-	reused, err := service.ResolveJar(context.Background(), operation, first.HandleValue(), []codexidentity.ClientScope{owner})
-	if err != nil || reused.Issued() || reused.JarID() != first.JarID() {
-		t.Fatalf("reused resolve = %#v, %v", reused, err)
+	commitTestCookie(t, first)
+	handle := first.handleValue
+	jar := first.jarID
+	first.DiscardAll()
+	reused := beginTestRequest(t, service, handle, owner)
+	if !reused.persisted || reused.jarID != jar {
+		t.Fatal("returned handle did not reuse its jar")
 	}
-	missing, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil || !missing.Issued() || missing.JarID() == first.JarID() || missing.HandleValue() == first.HandleValue() {
-		t.Fatalf("missing-handle resolve = %#v, %v", missing, err)
-	}
-	malformed, err := service.ResolveJar(context.Background(), operation, "not-a-handle", []codexidentity.ClientScope{owner})
-	if err != nil || !malformed.Issued() || malformed.JarID() == first.JarID() || malformed.JarID() == missing.JarID() {
-		t.Fatalf("malformed resolve = %#v, %v", malformed, err)
-	}
-	unknownValue := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xfe}, GatewayHandleEntropyBytes))
-	unknown, err := service.ResolveJar(context.Background(), operation, unknownValue, []codexidentity.ClientScope{owner})
-	if err != nil || !unknown.Issued() || unknown.JarID() == first.JarID() || unknown.JarID() == malformed.JarID() {
-		t.Fatalf("unknown resolve = %#v, %v", unknown, err)
-	}
-	if len(repository.bindings) != 4 {
-		t.Fatalf("independent handles created %d bindings, want 4", len(repository.bindings))
-	}
-	reusedAgain, err := service.ResolveJar(context.Background(), operation, first.HandleValue(), []codexidentity.ClientScope{owner})
-	if err != nil || reusedAgain.JarID() != first.JarID() {
-		t.Fatalf("original returned handle resolve = %#v, %v", reusedAgain, err)
-	}
-	mismatch, err := service.ResolveJar(context.Background(), operation, unknown.HandleValue(), []codexidentity.ClientScope{other})
-	if err != nil || !mismatch.Issued() || mismatch.JarID() == first.JarID() {
-		t.Fatalf("mismatch resolve = %#v, %v", mismatch, err)
+	reused.DiscardAll()
+	for _, test := range []struct {
+		name, handle string
+		owner        codexidentity.ClientScope
+	}{
+		{"missing", "", owner}, {"malformed", "not-a-handle", owner},
+		{"unknown", base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xfe}, GatewayHandleEntropyBytes)), owner},
+		{"owner mismatch", handle, testClientScope(t, "other")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := beginTestRequest(t, service, test.handle, test.owner)
+			defer request.DiscardAll()
+			if request.persisted || request.jarID == jar || request.handleValue != "" {
+				t.Fatal("fallback inherited persistent state")
+			}
+			if _, err := request.Commit(context.Background(), mustCookieAuthority(t, "seed")); err != nil {
+				t.Fatal(err)
+			}
+			if len(repository.bindings) != 1 {
+				t.Fatal("empty request created a binding")
+			}
+		})
 	}
 	clock.now = clock.now.Add(DefaultHandleAbsoluteTTL + time.Second)
-	expired, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil || !expired.Issued() || expired.JarID() == first.JarID() {
-		t.Fatalf("expired resolve = %#v, %v", expired, err)
-	}
-	if len(trace.events) != 8 {
-		t.Fatalf("trace events = %d", len(trace.events))
+	expired := beginTestRequest(t, service, handle, owner)
+	defer expired.DiscardAll()
+	if expired.persisted {
+		t.Fatal("expired handle was reused")
 	}
 	for _, event := range trace.events {
-		if strings.Contains(event.Reason, first.HandleValue()) {
-			t.Fatal("trace leaked raw handle")
+		if strings.Contains(event.Reason, handle) {
+			t.Fatal("trace leaked handle")
 		}
+	}
+}
+
+func beginTestRequest(t *testing.T, service *Service, handle string, owner codexidentity.ClientScope) *Request {
+	t.Helper()
+	request, err := service.BeginRequest(context.Background(), "test-request", handle, []codexidentity.ClientScope{owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(request.DiscardAll)
+	return request
+}
+
+func commitTestCookie(t *testing.T, request *Request) {
+	t.Helper()
+	authority := mustCookieAuthority(t, "seed")
+	if _, err := request.ApplyResponse(authority, mustURL(t, "https://example.com/"), []string{"sid=value; Path=/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := request.Commit(context.Background(), authority); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -267,16 +299,12 @@ func TestRequestOverlayLifecycleIsScopeLocalAndCommitOnly(t *testing.T) {
 	clock := &serviceClock{now: time.Date(2026, 8, 27, 2, 0, 0, 0, time.UTC)}
 	service := newTestService(t, repository, clock, deterministicRandom(), nil)
 	operation, _ := NewOperationID("operation-overlay")
-	access, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{testClientScope(t, "owner")})
+	request, err := service.BeginRequest(context.Background(), operation, "", []codexidentity.ClientScope{testClientScope(t, "owner")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	authorityA := mustCookieAuthority(t, "authority-a")
 	authorityB := mustCookieAuthority(t, "authority-b")
-	request, err := service.BeginRequest(operation, access)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if rejected, err := request.ApplyResponse(authorityA, mustURL(t, "https://api.example.com/login"), []string{"sid=overlay; Path=/"}); err != nil || len(rejected) != 0 {
 		t.Fatalf("apply = %v, rejected=%v", err, rejected)
 	}
@@ -305,7 +333,8 @@ func TestRequestOverlayLifecycleIsScopeLocalAndCommitOnly(t *testing.T) {
 		t.Fatalf("closed request error = %v", err)
 	}
 
-	next, _ := service.BeginRequest(operation, access)
+	next, _ := service.BeginRequest(context.Background(), operation, request.handleValue, []codexidentity.ClientScope{testClientScope(t, "owner")})
+	request.DiscardAll()
 	header, err = next.Select(context.Background(), authorityA, mustURL(t, "https://api.example.com/v1"))
 	if err != nil || header != "sid=persisted" {
 		t.Fatalf("persisted selection = %q, %v", header, err)
@@ -323,23 +352,26 @@ func TestServiceAndRequestFailuresStayExplicit(t *testing.T) {
 	repository := newMemoryRepository()
 	service := newTestService(t, repository, &serviceClock{now: now}, deterministicRandom(), nil)
 
+	authority := mustCookieAuthority(t, "failure")
+	transient := beginTestRequest(t, service, "", owner)
+	if _, err := transient.ApplyResponse(authority, mustURL(t, "https://example.com"), []string{"sid=value"}); err != nil {
+		t.Fatal(err)
+	}
 	repository.createAlways = errors.New("database down")
-	if _, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrStorage) {
+	if _, err := transient.Commit(context.Background(), authority); !errors.Is(err, ErrStorage) {
 		t.Fatalf("create failure = %v", err)
 	}
 	repository.createAlways = nil
-	access, err := service.ResolveJar(context.Background(), operation, "", []codexidentity.ClientScope{owner})
-	if err != nil {
+	if _, err := transient.Commit(context.Background(), authority); err != nil {
 		t.Fatal(err)
 	}
 	repository.useErr = errors.New("busy")
-	if _, err := service.ResolveJar(context.Background(), operation, access.HandleValue(), []codexidentity.ClientScope{owner}); !errors.Is(err, ErrStorage) {
+	if _, err := service.BeginRequest(context.Background(), operation, transient.handleValue, []codexidentity.ClientScope{owner}); !errors.Is(err, ErrStorage) {
 		t.Fatalf("lookup failure = %v", err)
 	}
 	repository.useErr = nil
-
-	request, _ := service.BeginRequest(operation, access)
-	authority := mustCookieAuthority(t, "failure")
+	request := beginTestRequest(t, service, transient.handleValue, owner)
+	transient.DiscardAll()
 	repository.loadErr = &PersistenceError{Kind: PersistenceCorrupt, Operation: "load", Cause: errors.New("corrupt")}
 	if _, err := request.Select(context.Background(), authority, mustURL(t, "https://example.com")); !errors.Is(err, ErrStorageCorrupt) {
 		t.Fatalf("load failure = %v", err)
@@ -391,20 +423,20 @@ func TestServiceRejectsInvalidDependenciesAndCryptoFailures(t *testing.T) {
 	op, _ := NewOperationID("operation-crypto")
 	owner := testClientScope(t, "owner")
 	validHandle := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, GatewayHandleEntropyBytes))
-	if _, err := service.ResolveJar(context.Background(), op, validHandle, []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
+	if _, err := service.BeginRequest(context.Background(), op, validHandle, []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
 		t.Fatalf("lookup crypto failure = %v", err)
 	}
 	service = newTestService(t, base.Repository, &serviceClock{now: time.Now()}, bytes.NewReader(nil), nil)
-	if _, err := service.ResolveJar(context.Background(), op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
+	if _, err := service.BeginRequest(context.Background(), op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrCrypto) {
 		t.Fatalf("random failure = %v", err)
 	}
-	if _, err := service.ResolveJar(missingContext, op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := service.BeginRequest(missingContext, op, "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("nil context = %v", err)
 	}
-	if _, err := service.ResolveJar(context.Background(), "", "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := service.BeginRequest(context.Background(), "", "", []codexidentity.ClientScope{owner}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("empty operation = %v", err)
 	}
-	if _, err := service.ResolveJar(context.Background(), op, "", nil); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := service.BeginRequest(context.Background(), op, "", nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("empty scopes = %v", err)
 	}
 }

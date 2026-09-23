@@ -391,7 +391,10 @@ func (a *Attempt) PrepareVisible(ctx context.Context, headers http.Header) (*Vis
 		// that the client may observe after an uncertain adapter failure.
 		return nil, dependencyError("provider_cookie_commit", err)
 	}
-	o.cookieClosed = true
+	o.gatewaySetCookie, err = o.cookieRequest.GatewaySetCookie(o.cookieScheme)
+	if err != nil {
+		return nil, dependencyError("provider_cookie_handle", err)
+	}
 	headers.Del("Set-Cookie")
 	if o.gatewaySetCookie != "" {
 		headers.Add("Set-Cookie", o.gatewaySetCookie)
@@ -569,8 +572,7 @@ func (o *Operation) Discard() {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.cookieRequest != nil && !o.cookieClosed {
+	if o.cookieRequest != nil {
 		o.cookieRequest.DiscardAll()
-		o.cookieClosed = true
 	}
 }
