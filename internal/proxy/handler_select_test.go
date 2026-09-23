@@ -431,6 +431,40 @@ func TestSelectProviderFallback_ExactProviderRuleFiltersCandidates(t *testing.T)
 	}
 }
 
+func TestSelectProviderFallback_PreservesProviderCatalogAndRetryIdentity(t *testing.T) {
+	store := newMockStore()
+	store.providers = []model.Provider{
+		withTestStaticCredential(model.Provider{ID: "p1", Name: "Provider 1", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p1", APIType: "claude", BaseURL: "https://p1.example"}}}, "claude", "p1-key"),
+		withTestStaticCredential(model.Provider{ID: "p2", Name: "Provider 2", Enabled: true, APITypes: []model.ProviderAPIType{{ProviderID: "p2", APIType: "claude", BaseURL: "https://p2.example"}}}, "claude", "p2-key"),
+	}
+	handler := &Handler{store: store}
+	request := &model.SelectRequest{APIType: "claude"}
+
+	// A retry can still be observed while another selection excludes its provider.
+	retryProvider, err := handler.eligibleFallbackProviderByID(t.Context(), request, "p1")
+	if err != nil || retryProvider == nil {
+		t.Fatalf("retry provider = (%v, %v), want p1", retryProvider, err)
+	}
+	alternate, err := handler.selectProviderFallback(t.Context(), request, 0, map[string]bool{"p1": true})
+	if err != nil || alternate == nil || alternate.ID != "p2" {
+		t.Fatalf("alternate = (%v, %v), want p2", alternate, err)
+	}
+	if retryProvider.ID != "p1" || retryProvider.Name != "Provider 1" {
+		t.Errorf("retry provider changed to %q (%q)", retryProvider.ID, retryProvider.Name)
+	}
+	for index, wantID := range []string{"p1", "p2"} {
+		if got := store.providers[index].ID; got != wantID {
+			t.Errorf("catalog provider %d = %q, want %q", index, got, wantID)
+		}
+	}
+
+	// An exclusion belongs to one selection, so p1 remains available to the next request.
+	selected, err := handler.selectProviderFallback(t.Context(), request, 0, map[string]bool{"p2": true})
+	if err != nil || selected == nil || selected.ID != "p1" {
+		t.Fatalf("subsequent selection = (%v, %v), want p1", selected, err)
+	}
+}
+
 // TestSelectProviderFallback_RoundRobin tests round-robin selection across attempts.
 func TestSelectProviderFallback_RoundRobin(t *testing.T) {
 	store := newMockStore()

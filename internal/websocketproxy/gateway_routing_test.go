@@ -357,6 +357,48 @@ func TestGatewaySelectProviderWithTracking_FallbackNormalizesMissingProvider(t *
 	}
 }
 
+type routingSharedProviderStore struct {
+	*mockStore
+}
+
+func (store *routingSharedProviderStore) ListProvidersByAPIType(context.Context, string) ([]model.Provider, error) {
+	return store.providers, nil
+}
+
+func TestGatewaySelectProviderFallback_PreservesProviderCatalogAndRetryIdentity(t *testing.T) {
+	store := &routingSharedProviderStore{mockStore: newMockStore()}
+	store.providers = []model.Provider{routingTestProvider("p1"), routingTestProvider("p2")}
+	gateway := &Gateway{store: store}
+	request := &model.SelectRequest{APIType: APITypeCodex, Transport: "websocket"}
+	current := gateway.newFallbackProviderLease(&store.providers[0], APITypeCodex)
+	defer current.Release()
+
+	// Stores may share catalog storage with an existing dispatch permit.
+	permit, err := gateway.reserveSameProviderDispatch(t.Context(), request, current)
+	if err != nil {
+		t.Fatalf("reserve retry: %v", err)
+	}
+	defer permit.Release()
+
+	alternate, err := gateway.selectProviderFallback(t.Context(), request, 0, map[string]bool{"p1": true})
+	if err != nil || alternate == nil || alternate.ID != "p2" {
+		t.Fatalf("alternate = (%v, %v), want p2", alternate, err)
+	}
+	if got := permit.Provider().ID; got != "p1" {
+		t.Errorf("retry provider changed to %q, want p1", got)
+	}
+	for index, wantID := range []string{"p1", "p2"} {
+		if got := store.providers[index].ID; got != wantID {
+			t.Errorf("catalog provider %d = %q, want %q", index, got, wantID)
+		}
+	}
+
+	selected, err := gateway.selectProviderFallback(t.Context(), request, 0, map[string]bool{"p2": true})
+	if err != nil || selected == nil || selected.ID != "p1" {
+		t.Fatalf("subsequent selection = (%v, %v), want p1", selected, err)
+	}
+}
+
 func TestSelectorResultNormalization(t *testing.T) {
 	wantErr := errors.New("selection failed")
 	if result, err := normalizeProviderSelection(ProviderSelection{}, wantErr); result.Provider() != nil || !errors.Is(err, wantErr) {

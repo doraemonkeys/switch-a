@@ -453,7 +453,9 @@ func (h *Gateway) selectProviderFallback(ctx context.Context, req *model.SelectR
 	if err != nil {
 		return nil, err
 	}
-	available := providers[:0]
+	// The store may share its catalog with active leases and dispatch permits.
+	// Filtering must own its output to preserve those providers' identities.
+	available := make([]model.Provider, 0, len(providers))
 	for index := range providers {
 		allowed, eligibilityErr := scope.AllowsProvider(ctx, &providers[index])
 		if eligibilityErr != nil {

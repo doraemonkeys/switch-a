@@ -95,8 +95,14 @@ func TestHandler_RecordsSwitchReasonInAttempts(t *testing.T) {
 	}, testPollTimeout)
 
 	attempts := store.LastAttempts(3)
-	if len(attempts) < 2 {
-		t.Fatalf("expected at least 2 attempts, got %d", len(attempts))
+	wantProviders := []string{"p1", "p1", "p2"}
+	if len(attempts) != len(wantProviders) {
+		t.Fatalf("expected %d attempts, got %d", len(wantProviders), len(attempts))
+	}
+	for index, want := range wantProviders {
+		if got := attempts[index].ProviderID; got != want {
+			t.Errorf("attempt %d provider = %q, want %q", index, got, want)
+		}
 	}
 
 	// The second attempt from p1 (index 1) should have switch_reason = "max_retries_exhausted"
