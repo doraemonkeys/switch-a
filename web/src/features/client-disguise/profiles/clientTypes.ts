@@ -4,7 +4,7 @@ interface ClientTypePresentation {
   originator: string;
 }
 
-// Use the same entry-point names for outgoing profiles and observed clients.
+// Auxiliary roles remain visible in observations, but are not login environments.
 export const CLIENT_TYPES: Record<string, ClientTypePresentation | undefined> =
   {
     desktop: {
@@ -24,7 +24,7 @@ export const CLIENT_TYPES: Record<string, ClientTypePresentation | undefined> =
     },
     "browser-use": {
       name: "Codex Browser Use",
-      description: "通过 Codex app-server 驱动浏览器操作的客户端。",
+      description: "客户端内置的浏览器操作请求，自动跟随主客户端环境。",
       originator: "codex-browser-use",
     },
     cli: {
@@ -34,3 +34,7 @@ export const CLIENT_TYPES: Record<string, ClientTypePresentation | undefined> =
       originator: "codex_cli_rs",
     },
   };
+
+export function isPrimaryClientType(clientType: string) {
+  return Boolean(CLIENT_TYPES[clientType]) && clientType !== "browser-use";
+}

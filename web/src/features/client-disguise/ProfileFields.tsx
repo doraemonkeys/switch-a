@@ -48,7 +48,8 @@ export function ProfileFields({
         <h3 id="profile-heading">环境配置</h3>
       </div>
       <p className="cd-description">
-        选择该登录凭据向上游呈现的主客户端身份、平台和版本。
+        选择该登录凭据向上游呈现的主客户端身份、平台和版本。 Browser Use
+        随主环境自动处理，无需单独选择。
       </p>
       <label className="cd-field cd-reference-field">
         客户端环境
@@ -70,10 +71,9 @@ export function ProfileFields({
                 环境不可用：{draft.environment}
               </option>
             )}
-          {environments.map(({ key, tuple, hasUserAgentSample }) => (
+          {environments.map(({ key, tuple }) => (
             <option key={key} value={key}>
               {environmentLabel(tuple)}
-              {!hasUserAgentSample && " · 仅部分特征"}
             </option>
           ))}
         </select>

@@ -3,6 +3,7 @@ import type {
   LoginView,
   ProfileBinding,
 } from "@/api/client-disguise/types";
+import { isPrimaryClientType } from "./profiles/clientTypes";
 import {
   environmentKey,
   environmentProfiles,
@@ -94,6 +95,7 @@ export function changeEnvironment(
 export function selectedProfile(draft: LoginDraft, state: DisguiseState) {
   return state.profiles.find(
     (profile) =>
+      isPrimaryClientType(profile.tuple.client_type) &&
       profile.id === profileSelection(draft).revisionID &&
       environmentKey(profile.tuple) === draft.environment,
   );

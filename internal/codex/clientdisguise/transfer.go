@@ -145,7 +145,7 @@ func (r *Repository) importBindings(ctx context.Context, tx *gorm.DB, records []
 		if err := validateVersionSource(record.VersionSource); err != nil {
 			return err
 		}
-		if record.CredentialSessionID == "" || !record.Tuple.Valid() || (record.Mode != ModeAuto && record.Mode != ModePinned) {
+		if record.CredentialSessionID == "" || !record.Tuple.PrimaryClient() || (record.Mode != ModeAuto && record.Mode != ModePinned) {
 			return invalid("invalid profile binding")
 		}
 		var login LoginIdentity

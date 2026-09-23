@@ -113,12 +113,6 @@ describe("login environment and snapshot selection", () => {
         hint: /运行 codex exec/,
       },
       {
-        type: "browser-use",
-        name: "Codex Browser Use",
-        originator: "codex-browser-use",
-        hint: /通过 Codex app-server 驱动浏览器操作/,
-      },
-      {
         type: "cli",
         name: "Codex 默认入口标识（未指定入口）",
         originator: "codex_cli_rs",
@@ -162,6 +156,34 @@ describe("login environment and snapshot selection", () => {
         }),
       );
     }
+  });
+
+  it("keeps Browser Use automatic when its observations are in the library", () => {
+    mount({
+      ...state,
+      profiles: [
+        ...state.profiles,
+        {
+          ...state.profiles[0],
+          id: "browser-use-sample",
+          tuple: { ...tuple, client_type: "browser-use" },
+          features: {
+            ...state.profiles[0].features,
+            user_agent: "codex-browser-use/0.156.0 (Windows 10; x86_64)",
+            originator: "codex-browser-use",
+          },
+        },
+      ],
+    });
+    expect(
+      screen.queryByRole("option", { name: /Browser Use/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Browser Use 随主环境自动处理/)).toBeVisible();
+    expect(
+      within(screen.getByLabelText("生效预览")).getByText(
+        /Browser Use 请求自动保留/,
+      ),
+    ).toBeVisible();
   });
 
   it("changes environments without changing update mode and restores each environment selection", async () => {
@@ -351,7 +373,10 @@ describe("login environment and snapshot selection", () => {
     });
     const preview = screen.getByLabelText("生效预览");
     expect(within(preview).getByText("1 · 来自快照")).toBeVisible();
-    expect(within(preview).getByText(/部分特征/)).toBeVisible();
+    expect(within(preview).getByText("按所选环境调整原 UA")).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: "Codex Desktop · Windows · x64" }),
+    ).toBeVisible();
     await user.selectOptions(
       screen.getByLabelText("发送版本来源"),
       "official_stable",

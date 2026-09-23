@@ -51,12 +51,8 @@ export function ProfileSummary({
           </dd>
         </div>
         <div>
-          <dt>客户端特征</dt>
-          <dd>
-            {hasUserAgentSample
-              ? "已采集 User-Agent"
-              : "部分特征 · 未采集 User-Agent"}
-          </dd>
+          <dt>普通请求 UA</dt>
+          <dd>{hasUserAgentSample ? "使用采样 UA" : "按所选环境调整原 UA"}</dd>
         </div>
         <div>
           <dt>推理请求版本</dt>
@@ -74,14 +70,15 @@ export function ProfileSummary({
         </div>
       </dl>
       <p className="cd-field-help">
-        普通请求使用所选客户端身份；Browser Use 请求使用 codex-browser-use UA，
-        共享所选平台、架构和 Codex 版本。使用其他客户端的快照时，Browser Use
-        的终端信息和调用方版本沿用原请求。
+        Browser Use 请求自动保留 codex-browser-use 身份，共享所选平台、架构和
+        Codex 版本，保留原请求的终端信息和调用方版本。指定参考客户端后， 其
+        Browser Use UA 也会单独采集，不会替换普通请求的 UA。
       </p>
       {!hasUserAgentSample && (
         <>
           <p className="cd-field-help cd-partial-profile">
-            可识别的 Codex UA 会应用所选客户端身份、平台、架构和已知版本。
+            该快照未采集完整 UA；可识别的 Codex UA
+            仍会应用所选客户端身份、平台、架构和已知版本。
             未采集的系统版本与终端信息沿用原请求；跨平台时不沿用原系统版本。{" "}
             如需使用采样 UA，请在{" "}
             <Link

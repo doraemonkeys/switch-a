@@ -74,7 +74,7 @@ func (h *Handler) prepareHTTPDisguise(ctx context.Context, pctx *proxyContext, p
 	session := d.sessions[key]
 	if session == nil {
 		session = wire.NewSession(target, pctx.requestID, d.operation.Facts())
-		h.logger.Debug("client_disguise.request_profile_selected", zap.String("operation_id", pctx.requestID), zap.String("provider_id", provider.ID), zap.String("credential_session_id", credential.SessionID), zap.String("request_role", string(d.operation.Facts().RequestRole)), zap.String("target_client_type", target.Profile.Tuple.ClientType), zap.String("revision_id", target.Profile.ID), zap.String("version_source", target.Binding.VersionSource))
+		h.logger.Debug("client_disguise.request_profile_selected", zap.String("operation_id", pctx.requestID), zap.String("provider_id", provider.ID), zap.String("credential_session_id", credential.SessionID), zap.String("request_role", string(d.operation.Facts().RequestRole)), zap.String("target_client_type", target.Profile.Tuple.ClientType), zap.String("revision_id", target.Profile.ID), zap.String("version_source", target.Binding.VersionSource), zap.Bool("primary_profile_bound", target.Binding.RevisionID != ""))
 		d.sessions[key] = session
 	}
 	d.current, d.target, d.providerID = session, target, provider.ID

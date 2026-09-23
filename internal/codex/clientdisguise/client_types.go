@@ -8,9 +8,8 @@ const (
 	clientTypeDefault    = "cli"
 )
 
-// These identities describe profile samples and selectable primary clients.
-// Request roles are resolved separately: a Browser Use request also exists
-// within a Desktop or CLI target environment.
+// Observations include auxiliary request roles as well as primary clients.
+// Browser Use samples remain learnable, but cannot define a login's main client.
 var clientTypes = []struct {
 	name       string
 	originator string
@@ -21,6 +20,12 @@ var clientTypes = []struct {
 	{clientTypeExec, "codex_exec", builtinExecSourceURL},
 	{clientTypeBrowserUse, "codex-browser-use", builtinBrowserUseSourceURL},
 	{clientTypeDefault, "codex_cli_rs", builtinSourceURL},
+}
+
+// Browser Use can arrive before its parent client. Its host is useful evidence,
+// but its entry point must never become the login's ordinary request identity.
+func (t Tuple) PrimaryClient() bool {
+	return t.Valid() && t.ClientType != clientTypeBrowserUse
 }
 
 func validClientType(value string) bool {

@@ -5,8 +5,7 @@ import type {
   ReferenceSource,
 } from "@/api/client-disguise/types";
 
-import { CLIENT_TYPES } from "./clientTypes";
-import { sampledUserAgent } from "./profileFeatures";
+import { CLIENT_TYPES, isPrimaryClientType } from "./clientTypes";
 
 const PLATFORM_NAMES: Record<string, string> = {
   windows: "Windows",
@@ -90,25 +89,18 @@ export function sortedProfiles(profiles: ProfileRevision[]) {
 export function environmentProfiles(state: DisguiseState, environment: string) {
   return sortedProfiles(
     state.profiles.filter(
-      (profile) => environmentKey(profile.tuple) === environment,
+      (profile) =>
+        isPrimaryClientType(profile.tuple.client_type) &&
+        environmentKey(profile.tuple) === environment,
     ),
   );
 }
 export function profileEnvironments(profiles: ProfileRevision[]) {
-  const environments = new Map<
-    string,
-    { key: string; tuple: ClientTuple; hasUserAgentSample: boolean }
-  >();
+  const environments = new Map<string, { key: string; tuple: ClientTuple }>();
   for (const profile of profiles) {
+    if (!isPrimaryClientType(profile.tuple.client_type)) continue;
     const key = environmentKey(profile.tuple);
-    // Sampling belongs to the environment's available profiles, not its client type.
-    environments.set(key, {
-      key,
-      tuple: profile.tuple,
-      hasUserAgentSample:
-        Boolean(sampledUserAgent(profile)) ||
-        environments.get(key)?.hasUserAgentSample === true,
-    });
+    environments.set(key, { key, tuple: profile.tuple });
   }
   return [...environments.values()].sort((a, b) =>
     environmentLabel(a.tuple).localeCompare(environmentLabel(b.tuple)),
@@ -124,6 +116,7 @@ export function referenceHead(
   );
   return state.profiles.find(
     (profile) =>
+      isPrimaryClientType(profile.tuple.client_type) &&
       profile.id === track?.revision_id &&
       profile.source_id === source &&
       environmentKey(profile.tuple) === environment,

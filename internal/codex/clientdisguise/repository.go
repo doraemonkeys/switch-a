@@ -36,7 +36,9 @@ func Migrate(ctx context.Context, db *gorm.DB) error {
 				return err
 			}
 		}
-		return nil
+		// Retire the former primary Browser Use selection while preserving its
+		// observations and the login's device. The next primary request may bind.
+		return tx.Where("json_extract(tuple, '$.client_type') = ?", clientTypeBrowserUse).Delete(&ProfileBinding{}).Error
 	})
 }
 
@@ -162,10 +164,18 @@ func (r *Repository) CommitTarget(ctx context.Context, candidate Candidate) (Tar
 			return nil
 		}
 		binding := ProfileBinding{CredentialSessionID: candidate.CredentialSessionID, Tuple: candidate.Profile.Tuple, Mode: ModeAuto, RevisionID: candidate.Profile.ID, UpdatedAt: r.now()}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&binding).Error; err != nil {
-			return err
+		if candidate.Profile.Tuple.PrimaryClient() {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&binding).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.First(&binding, "credential_session_id = ?", candidate.CredentialSessionID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) && !candidate.Profile.Tuple.PrimaryClient() {
+				// An auxiliary request uses the device without choosing the main
+				// client. A concurrently selected primary binding still wins.
+				result.Login, result.Profile = login, candidate.Profile.Clone()
+				return nil
+			}
 			return err
 		}
 		var profile ProfileRevision
@@ -204,6 +214,9 @@ func (r *Repository) SetBinding(ctx context.Context, binding ProfileBinding) (Pr
 		var revision ProfileRevision
 		if err := tx.First(&revision, "id = ?", binding.RevisionID).Error; err != nil {
 			return fmt.Errorf("profile revision %q: %w", binding.RevisionID, recordError(err))
+		}
+		if !revision.Tuple.PrimaryClient() {
+			return invalid("Browser Use is an automatic request role; select a primary client environment")
 		}
 		binding.Tuple = revision.Tuple
 		if binding.ReferenceSourceID != "" {

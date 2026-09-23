@@ -77,7 +77,7 @@ export function featureSummary(profile: ProfileRevision) {
     profile.features.os_version && "系统 " + profile.features.os_version,
     profile.features.desktop_build &&
       "Desktop build " + profile.features.desktop_build,
-    !sampledUserAgent(profile) && "部分特征 · 未采集 User-Agent",
+    !sampledUserAgent(profile) && "按所选环境调整原 UA",
   ]
     .filter(Boolean)
     .join(" · ");
