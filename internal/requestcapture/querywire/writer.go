@@ -149,11 +149,10 @@ func writeWebSocketHandshakeJSON(writer *documentWriter, handshake *capturevalue
 	writer.endObject()
 }
 
+// The query contract declares headers as objects and header values as arrays.
+// Go's nil collections would otherwise encode as JSON null and violate that
+// contract for clients that call collection methods without null guards.
 func writeHeadersJSON(writer *documentWriter, headers map[string][]string) {
-	if headers == nil {
-		writer.raw("null")
-		return
-	}
 	first := true
 	writer.beginObject()
 	for name, values := range headers {
@@ -164,10 +163,6 @@ func writeHeadersJSON(writer *documentWriter, headers map[string][]string) {
 }
 
 func writeStringsJSON(writer *documentWriter, values []string) {
-	if values == nil {
-		writer.raw("null")
-		return
-	}
 	writer.beginArray()
 	for index, value := range values {
 		if index > 0 {

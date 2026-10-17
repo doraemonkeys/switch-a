@@ -137,31 +137,23 @@ func writeRecordPageJSON(writer *jsonDocumentWriter, page capturevalue.RecordPag
 	writer.field("snapshot_watermark", &first)
 	writer.string(page.SnapshotWatermark)
 	writer.field("records", &first)
-	if page.Records == nil {
-		writer.raw("null")
-	} else {
-		writer.beginArray()
-		for index := range page.Records {
-			if index > 0 {
-				writer.raw(",")
-			}
-			writeQueryRecordSummaryJSON(writer, page.Records[index])
+	writer.beginArray()
+	for index := range page.Records {
+		if index > 0 {
+			writer.raw(",")
 		}
-		writer.endArray()
+		writeQueryRecordSummaryJSON(writer, page.Records[index])
 	}
+	writer.endArray()
 	writer.field("gateway_traces", &first)
-	if page.GatewayTraces == nil {
-		writer.raw("null")
-	} else {
-		writer.beginArray()
-		for index := range page.GatewayTraces {
-			if index > 0 {
-				writer.raw(",")
-			}
-			writeQueryGatewayTraceJSON(writer, page.GatewayTraces[index])
+	writer.beginArray()
+	for index := range page.GatewayTraces {
+		if index > 0 {
+			writer.raw(",")
 		}
-		writer.endArray()
+		writeQueryGatewayTraceJSON(writer, page.GatewayTraces[index])
 	}
+	writer.endArray()
 	if page.NextCursor != "" {
 		writer.field("next_cursor", &first)
 		writer.string(page.NextCursor)
@@ -235,18 +227,14 @@ func writeWebSocketExchangeDetailJSON(writer *jsonDocumentWriter, detail *captur
 	writer.field("handshake_body", &first)
 	writeBlobPreviewJSON(writer, detail.HandshakeBody)
 	writer.field("messages", &first)
-	if detail.Messages == nil {
-		writer.raw("null")
-	} else {
-		writer.beginArray()
-		for index := range detail.Messages {
-			if index > 0 {
-				writer.raw(",")
-			}
-			writeMessageSnapshotJSON(writer, detail.Messages[index])
+	writer.beginArray()
+	for index := range detail.Messages {
+		if index > 0 {
+			writer.raw(",")
 		}
-		writer.endArray()
+		writeMessageSnapshotJSON(writer, detail.Messages[index])
 	}
+	writer.endArray()
 	writer.field("events_truncated", &first)
 	writer.boolean(detail.EventsTruncated)
 	if detail.Close != nil {
@@ -362,18 +350,14 @@ func writeQueryGatewayTraceJSON(writer *jsonDocumentWriter, trace capturevalue.G
 	writer.field("gateway_request_id", &first)
 	writer.string(trace.GatewayRequestID)
 	writer.field("entries", &first)
-	if trace.Entries == nil {
-		writer.raw("null")
-	} else {
-		writer.beginArray()
-		for index := range trace.Entries {
-			if index > 0 {
-				writer.raw(",")
-			}
-			writeQueryTraceEntryJSON(writer, trace.Entries[index])
+	writer.beginArray()
+	for index := range trace.Entries {
+		if index > 0 {
+			writer.raw(",")
 		}
-		writer.endArray()
+		writeQueryTraceEntryJSON(writer, trace.Entries[index])
 	}
+	writer.endArray()
 	writer.field("history_truncated_before", &first)
 	writer.boolean(trace.HistoryTruncatedBefore)
 	writer.field("history_truncated_after", &first)

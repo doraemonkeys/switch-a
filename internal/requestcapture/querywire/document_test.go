@@ -177,8 +177,8 @@ func TestWriteDocumentsPreserveNullAndOmittedFields(t *testing.T) {
 
 	pagePayload, _ := encodePage(t, capturevalue.RecordPage{})
 	page := decodeObject(t, pagePayload)
-	assertJSONNull(t, page["records"], "records")
-	assertJSONNull(t, page["gateway_traces"], "gateway_traces")
+	assertJSONEmptyArray(t, page["records"], "records")
+	assertJSONEmptyArray(t, page["gateway_traces"], "gateway_traces")
 	if _, ok := page["next_cursor"]; ok {
 		t.Fatal("empty next_cursor must be omitted")
 	}
@@ -227,7 +227,28 @@ func TestWriteDocumentsPreserveNullAndOmittedFields(t *testing.T) {
 			t.Fatalf("nil websocket field %q must be omitted", field)
 		}
 	}
-	assertJSONNull(t, websocket["messages"], "messages")
+	assertJSONEmptyArray(t, websocket["messages"], "messages")
+}
+
+func TestWriteRecordDetailEncodesNilIngressCollectionsAsEmptyCollections(t *testing.T) {
+	t.Parallel()
+
+	payload, _ := encodeDetail(t, capturevalue.RecordDetail{
+		HTTP: &capturevalue.HTTPExchangeDetail{
+			Request: capturevalue.RequestSnapshot{Ingress: &capturevalue.IngressSnapshot{}},
+		},
+	})
+	detail := decodeObject(t, payload)
+	httpDetail := decodeObject(t, detail["http"])
+	request := decodeObject(t, httpDetail["request"])
+
+	headers := decodeObject(t, request["headers"])
+	if len(headers) != 0 {
+		t.Fatalf("nil request headers = %s, want {}", request["headers"])
+	}
+	ingress := decodeObject(t, request["ingress"])
+	assertJSONEmptyArray(t, ingress["transfer_encoding"], "transfer_encoding")
+	assertJSONEmptyArray(t, ingress["declared_trailer_keys"], "declared_trailer_keys")
 }
 
 func TestWriteRecordPageStreamsInFixedChunks(t *testing.T) {
@@ -480,6 +501,13 @@ func assertJSONNull(t *testing.T, payload []byte, field string) {
 	t.Helper()
 	if string(payload) != "null" {
 		t.Fatalf("%s = %s, want null", field, payload)
+	}
+}
+
+func assertJSONEmptyArray(t *testing.T, payload []byte, field string) {
+	t.Helper()
+	if string(payload) != "[]" {
+		t.Fatalf("%s = %s, want []", field, payload)
 	}
 }
 

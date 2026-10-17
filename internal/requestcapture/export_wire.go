@@ -448,8 +448,10 @@ func writeRequestSnapshotJSON(writer *jsonDocumentWriter, request RequestSnapsho
 		writer.field("ingress", &first)
 		writeIngressSnapshotJSON(writer, request.Ingress)
 	}
-	writer.field("trailers", &first)
-	writeHeadersJSON(writer, request.Trailers)
+	if len(request.Trailers) > 0 {
+		writer.field("trailers", &first)
+		writeHeadersJSON(writer, request.Trailers)
+	}
 	writer.endObject()
 }
 
@@ -506,10 +508,14 @@ func writeHTTPResponseJSON(writer *jsonDocumentWriter, response *HTTPResponseSna
 	writeHeadersJSON(writer, response.Headers)
 	writer.field("content_length", &first)
 	writer.int64(response.ContentLength)
-	writer.field("declared_trailer_keys", &first)
-	writeStringsJSON(writer, response.DeclaredTrailerKeys)
-	writer.field("trailers", &first)
-	writeHeadersJSON(writer, response.Trailers)
+	if len(response.DeclaredTrailerKeys) > 0 {
+		writer.field("declared_trailer_keys", &first)
+		writeStringsJSON(writer, response.DeclaredTrailerKeys)
+	}
+	if len(response.Trailers) > 0 {
+		writer.field("trailers", &first)
+		writeHeadersJSON(writer, response.Trailers)
+	}
 	writer.endObject()
 }
 
@@ -602,11 +608,10 @@ func writeMessageJSON(writer *jsonDocumentWriter, message exportMessageSnapshot)
 	writer.endObject()
 }
 
+// Export metadata uses the same collection shape as the query API. Empty Go
+// collections must stay arrays/objects so consumers never handle JSON null for
+// a field whose schema declares a collection.
 func writeHeadersJSON(writer *jsonDocumentWriter, headers map[string][]string) {
-	if headers == nil {
-		writer.raw("null")
-		return
-	}
 	first := true
 	writer.beginObject()
 	for name, values := range headers {
@@ -617,10 +622,6 @@ func writeHeadersJSON(writer *jsonDocumentWriter, headers map[string][]string) {
 }
 
 func writeStringsJSON(writer *jsonDocumentWriter, values []string) {
-	if values == nil {
-		writer.raw("null")
-		return
-	}
 	writer.beginArray()
 	for index, value := range values {
 		if index > 0 {
